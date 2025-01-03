@@ -62,10 +62,10 @@ class YoloV8Node : public rclcpp::Node
                 auto qos = rclcpp::QoS(10);
                 qos.best_effort();
 
-                rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr subscription_ = this->create_subscription<sensor_msgs::msg::Image>(
+                rclcpp::Subscription<sensor_msgs::msg::Image>::UniquePtr subscription_ = this->create_subscription<sensor_msgs::msg::Image>(
                     topic + "/image", 
                     qos,
-                    [this, topic](const sensor_msgs::msg::Image::SharedPtr msg)
+                    [this, topic](const sensor_msgs::msg::Image::UniquePtr msg)
                     {
                         this->addToBufferCallback(msg, topic);
                     },
