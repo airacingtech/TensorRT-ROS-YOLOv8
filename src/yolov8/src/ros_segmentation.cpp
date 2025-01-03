@@ -56,12 +56,20 @@ class YoloV8Node : public rclcpp::Node
 
             // Create subscribers and publishers for all cameras
             for (const std::string& topic : camera_topics_) {
-                rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr subscription_ = this->create_subscription<sensor_msgs::msg::Image>(
-                    topic + "/image", 10,
-                    [this, topic](const sensor_msgs::msg::Image::SharedPtr msg)
+                rclcpp::SubscriptionOptions sub_options;
+                sub_options.use_intra_process_comm = rclcpp::IntraProcessSetting::Enable;
+
+                auto qos = rclcpp::QoS(10);
+                qos.best_effort();
+
+                rclcpp::Subscription<sensor_msgs::msg::Image>::UniquePtr subscription_ = this->create_subscription<sensor_msgs::msg::Image>(
+                    topic + "/image", 
+                    qos,
+                    [this, topic](const sensor_msgs::msg::Image::UniquePtr msg)
                     {
                         this->addToBufferCallback(msg, topic);
-                    }
+                    },
+                    sub_options
                 );
                 
                 subscriptions_.push_back(subscription_);
@@ -86,11 +94,11 @@ class YoloV8Node : public rclcpp::Node
         * @param image_msg: The image message from the camera
         * @param topic: The ROS topic the image message was published on
         */
-        void addToBufferCallback(const sensor_msgs::msg::Image::SharedPtr &image_msg, const std::string topic) {
+        void addToBufferCallback(sensor_msgs::msg::Image::UniquePtr image_msg, const std::string topic) {
             // TODO: Will this be deleted in memory since it is passed?
             std::cout << "Received image message on topic " << topic << std::endl;
             std::unique_lock<std::mutex> lock(buffer_mutex_);
-            current_buffer_[topic] = image_msg;
+            current_buffer_[topic] = std::move(image_msg);
 
             // Check if ready for batching
             if (current_buffer_.size() == camera_topics_.size()) {
@@ -200,7 +208,7 @@ class YoloV8Node : public rclcpp::Node
         void preprocess_callback(std::map<std::string, cv::Mat>& images) {
             for (const auto& pair : processing_buffer_) {
                 std::string camera_topic = pair.first;
-                const sensor_msgs::msg::Image::SharedPtr image_msg = pair.second;
+                const sensor_msgs::msg::Image::UniquePtr image_msg = pair.second;
                 try
                     {
                         // Share the memory with the original image
@@ -416,7 +424,7 @@ class YoloV8Node : public rclcpp::Node
         std::map<std::string, sensor_msgs::msg::Image::SharedPtr> processing_buffer_;
         std::mutex buffer_mutex_;
 
-        std::vector<rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr> subscriptions_;
+        std::vector<rclcpp::Subscription<sensor_msgs::msg::Image>::UniquePtr> subscriptions_;
         YoloV8& yoloV8_;
         };
 
