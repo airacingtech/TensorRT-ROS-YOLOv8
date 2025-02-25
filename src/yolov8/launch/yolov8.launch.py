@@ -27,8 +27,8 @@ def generate_launch_description():
     env = Env()
     env.read_env(env_file_path)
 
-    onnx_model_path = env("ONNX_MODEL")
-    model_dir = os.path.join(models_dir, onnx_model_path)
+    yolo_model_dir = os.path.join(models_dir, env("YOLO_ONNX_MODEL"))
+    dpt_model_dir = os.path.join(models_dir, env("DPT_ONNX_MODEL"))
     camera_topics = env.str("CAMERA_TOPICS").split(",")
     camera_topic_suffix = env("CAMERA_TOPIC_SUFFIX")
     camera_buffer_hz = env.float("CAMERA_BUFFER_HZ")
@@ -48,8 +48,8 @@ def generate_launch_description():
     # class_names = env("CLASS_NAMES").split(",")
 
     print("YOLOv8 Parameters:")
-    print(f"onnx_model_path: {onnx_model_path}")
-    print(f"model_dir: {model_dir}")
+    # print(f"onnx_model_path: {onnx_model_path}")
+    print(f"model_dir: {yolo_model_dir}")
     print(f"camera_topics: {camera_topics}")
     print(f"camera_topic_suffix: {camera_topic_suffix}")
     print(f"camera_buffer_hz: {camera_buffer_hz}")
@@ -79,7 +79,7 @@ def generate_launch_description():
             package='yolov8',
             executable='ros_segmentation',
             parameters=[{
-                'model_dir': model_dir,
+                # 'model_dir': model_dir,
                 'camera_topics': camera_topics,
                 'camera_topic_suffix': camera_topic_suffix,
                 'camera_buffer_hz': camera_buffer_hz,
@@ -88,7 +88,7 @@ def generate_launch_description():
                 'visualize_one_channel_mask': visualize_one_channel_mask,
             }],
             arguments=[
-                '--model', model_dir,
+                # '--model', model_dir,
                 '--precision', precision,
                 '--calibration-data', calibration_data_directory,
                 '--prob-threshold', str(probability_threshold),

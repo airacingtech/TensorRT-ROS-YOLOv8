@@ -1,6 +1,7 @@
 # include <mutex>
 
 #include "yolov8.h"
+#include "dpt.h"
 #include "cmd_line_util.h"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/image.hpp"
@@ -17,8 +18,8 @@ using std::placeholders::_1;
 class YoloV8Node : public rclcpp::Node
 {
     public:
-        YoloV8Node(YoloV8& yoloV8)
-        : Node("yolo_v8"), yoloV8_(yoloV8)
+        PerceptionNode(YoloV8& yoloV8, DepthAnything& dpt)
+        : Node("camera_perception"), yoloV8_(yoloV8), dpt_(dpt)
         {
             // Get ROS parameters
             this->declare_parameter("camera_topics", camera_topics_);
@@ -51,7 +52,7 @@ class YoloV8Node : public rclcpp::Node
             }
 
             // Check if model batch size matches the number of camera topics
-            if (camera_topics_.size() != yoloV8_.getBatchSize()) {
+            if (camera_topics_.size() != yoloV8_.getBatchSize() || camera_topics_.size() != dpt_.getBatchSize()) {
                 throw std::runtime_error("Model batch size (" + std::to_string(yoloV8_.getBatchSize()) +
                     ") does not match the number of camera topics (" + std::to_string(camera_topics_.size()) + ")");
             }
@@ -142,12 +143,15 @@ class YoloV8Node : public rclcpp::Node
                 images.push_back(pair.second);
             }
 
-            // Run inference
+            // Run inference on Yolo
             std::vector<std::vector<Object>> objects = yoloV8_.detectObjects(images);
-
             if (objects.size() == 0) {
                std::cout << "No objects detected at time " << this->now().seconds() << std::endl;
             }
+
+            // Run inference on DepthAnything
+            cv::Mat result_d = dpt_.infer(images[0]);
+            std::cout << "Depth Image Indferred and is Successful!!" << this->now().seconds() << std::endl;
 
             size_t i = 0;
             for (const auto& batch : objects) {
@@ -427,20 +431,29 @@ class YoloV8Node : public rclcpp::Node
 
         std::vector<rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr> subscriptions_;
         YoloV8& yoloV8_;
+        DepthAnything& dpt_;
         };
 
 int main(int argc, char *argv[]) {
     YoloV8Config config;
-    std::string onnxModelPath;
+    std::string yolo_onnxModelPath;
+    std::string dpt_onnxModelPath = "";
 
-    std::string parseArgsError = parseArguments(argc, argv, config, onnxModelPath);
+    // Parse arguments
+    std::string parseArgsError = parseArgs(argc, argv, config, yolo_onnxModelPath, dpt_onnxModelPath);
     if (!parseArgsError.empty()) {
         RCLCPP_WARN(rclcpp::get_logger("rclcpp"), "YOLOv8 arguement parser: %s", parseArgsError.c_str());
     }
     // Create the YoloV8 engine
     RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "Creating YoloV8 engine --- Could take a while if Engine file is not already built and cached.");
-    YoloV8 yoloV8(onnxModelPath, config);
+    YoloV8 yoloV8(yolo_onnxModelPath, config);
     RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "YoloV8 engine created and loaded into memory.");
+
+    // Create the DepthAnything engine
+    RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "Creating DepthAnything engine --- Could take a while if Engine file is not already built and cached.");
+    DepthAnything dpt(dpt_onnxModelPath, rclcpp::get_logger("rclcpp"));
+    dpt.init(config.dptModelPath, rclcpp::get_logger("rclcpp"));
+    RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "DepthAnything engine created and loaded into memory.");
 
     // Create ROS2 Node
     rclcpp::init(argc, argv);

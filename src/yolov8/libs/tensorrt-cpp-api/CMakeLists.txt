@@ -13,8 +13,9 @@ set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake" ${CMAKE_MODULE_PATH})
 
 # ----------- Set TENSORT_DIR for TENSRORT TAR INSTALL HERE ----------
 # Specify the path to TensorRT root dir for FindTensorRT.cmake to find the libraries
-set(TensorRT_DIR $ENV{HOME}/libs/TensorRT-8.6.1.6/)
-# set(TensorRT_DIR /usr/src/tensorrt/)
+# set(TensorRT_DIR $ENV{HOME}/libs/TensorRT-8.6.1.6/)
+# set(TensorRT_NVPARSERS_LIBRARY "/usr/src/tensorrt/lib/libnvparsers.so")
+set(TensorRT_DIR /usr/src/tensorrt/)
 # ----------- Set TENSORT_DIR for TENSRORT TAR INSTALL HERE ----------
 
 # Check if the path to TensorRT root dir exists
@@ -27,12 +28,21 @@ if (NOT EXISTS ${TensorRT_DIR})
     return()
 endif()
 
-# Set the version of CUDA to use
-set(CUDA_VERSION "11.8")
-# Use the correct version of CUDA
-set(CUDA_TOOLKIT_ROOT_DIR "/usr/local/cuda-${CUDA_VERSION}")
-# Set CMAKE_CUDA_COMPILER to the correct version of nvcc
-set(CMAKE_CUDA_COMPILER "/usr/local/cuda-${CUDA_VERSION}/bin/nvcc")
+# # Set the version of CUDA to use
+# set(CUDA_VERSION "11.8")
+# # Use the correct version of CUDA
+# set(CUDA_TOOLKIT_ROOT_DIR "/usr/local/cuda-${CUDA_VERSION}")
+# # Set CMAKE_CUDA_COMPILER to the correct version of nvcc
+# set(CMAKE_CUDA_COMPILER "/usr/local/cuda-${CUDA_VERSION}/bin/nvcc")
+
+# Detect CUDA Version
+find_package(CUDA REQUIRED)
+if (NOT CUDA_FOUND)
+    message(FATAL_ERROR "CUDA not found. Please ensure CUDA is installed.")
+    return()
+endif()
+
+message(STATUS "Found CUDA: ${CUDA_VERSION} at ${CUDA_TOOLKIT_ROOT_DIR}")
 
 # We require CUDA, OpenCV, and TensorRT
 # Uses FindTensorRT.cmake module to find the libraries
@@ -53,7 +63,7 @@ endif()
 
 message(STATUS "CUDA Version in tensorrt-cpp-api: ${CUDA_VERSION}")
 
-find_package(OpenCV 4.8.0 REQUIRED)
+find_package(OpenCV 4.11.0 REQUIRED)
 if (NOT OpenCV_FOUND)
     message(FATAL_ERROR "OpenCV not found. Please make sure OpenCV is installed.")
     return()

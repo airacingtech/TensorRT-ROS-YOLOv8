@@ -7,11 +7,19 @@ endif()
 
 # Set CUDA early so OpenCV can find it
 # Set the version of CUDA to use
-set(CUDA_VERSION "11.8")
-# # Use the correct version of CUDA
-set(CUDA_TOOLKIT_ROOT_DIR "/usr/local/cuda-${CUDA_VERSION}")
-# # Set CMAKE_CUDA_COMPILER to the correct version of nvcc
-set(CMAKE_CUDA_COMPILER "/usr/local/cuda-${CUDA_VERSION}/bin/nvcc")
+# set(CUDA_VERSION "11.8")
+# # # Use the correct version of CUDA
+# set(CUDA_TOOLKIT_ROOT_DIR "/usr/local/cuda-${CUDA_VERSION}")
+# # # Set CMAKE_CUDA_COMPILER to the correct version of nvcc
+# set(CMAKE_CUDA_COMPILER "/usr/local/cuda-${CUDA_VERSION}/bin/nvcc")
+# Detect CUDA Version
+find_package(CUDA REQUIRED)
+if (NOT CUDA_FOUND)
+    message(FATAL_ERROR "CUDA not found. Please ensure CUDA is installed.")
+    return()
+endif()
+
+message(STATUS "Found CUDA: ${CUDA_VERSION} at ${CUDA_TOOLKIT_ROOT_DIR}")
 
 # Find dependencies
 find_package(ament_cmake_auto REQUIRED)

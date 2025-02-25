@@ -468,7 +468,13 @@ bool Engine::runInference(const std::vector<std::vector<cv::cuda::GpuMat>> &inpu
         std::vector<std::vector<float>> outputs{};
         // Iterate through the output buffers (as defined by the bindings of the optimization profile(s))
         // Start at index m_inputDims.size() to account for the inputs in our m_buffers
-        for (int32_t outputBinding = numInputs; outputBinding < m_engine->getNbBindings(); ++outputBinding) {
+// #if NV_TENSORRT_MAJOR < 10
+//   const int totalBindings = m_engine->getNbBindings();
+// #else
+//   // Use an alternative function or adjust your logic
+//   const int totalBindings = m_engine->getNbIOTensors();
+// #endif
+        for (int32_t outputBinding = numInputs; outputBinding < totalBindings; ++outputBinding) {
             std::vector<float> output;
             auto outputLenFloat = m_outputLengthsFloat[outputBinding - numInputs];
             output.resize(outputLenFloat);
