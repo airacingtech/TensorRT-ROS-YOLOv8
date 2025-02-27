@@ -1,4 +1,4 @@
-#include "depth_anything.h"
+#include "dpt.h"
 #include <NvOnnxParser.h>
 
 #define isFP16 true
@@ -53,7 +53,6 @@ void DepthAnything::init(std::string model_path, nvinfer1::ILogger& logger)
 
     // create CUDA stream
     cudaStreamCreate(&stream);
-
     cudaMalloc(&buffer[0], 3 * input_h * input_w * sizeof(float));
     cudaMalloc(&buffer[1], input_h * input_w * sizeof(float));
 
@@ -127,33 +126,21 @@ cv::Mat DepthAnything::predict(cv::Mat& image)
     cv::Mat colormap;
     cv::applyColorMap(depth_mat, colormap, cv::COLORMAP_INFERNO);
 
-    // Rescale the colormap
-    int limX, limY;
-    if (img_w > img_h)
-    {
-        limX = input_w;
-        limY = input_w * img_h / img_w;
-    }
-    else
-    {
-        limX = input_w * img_w / img_h;
-        limY = input_w;
-    }
+    // // Rescale the colormap
+    // int limX, limY;
+    // if (img_w > img_h)
+    // {
+    //     limX = input_w;
+    //     limY = input_w * img_h / img_w;
+    // }
+    // else
+    // {
+    //     limX = input_w * img_w / img_h;
+    //     limY = input_w;
+    // }
     cv::resize(colormap, colormap, cv::Size(img_w, img_h));
 
     return colormap;
-}
-
-// CUDA Kernel for Post-processing
-// TODO: Think about mememory coalescing
-__global__ void postprocessKernel(float* depth, int totalElements){
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if idx < totalElements{
-        float d = depth[idx];
-        // Clamp d to the range [0, 120]
-        d = fminf(fmaxf(d, 0.0f), 120.0f);
-        depth[idx] = 120.0f - d;
-    }
 }
 
 cv::Mat DepthAnything::infer(cv::Mat& image)
@@ -176,12 +163,8 @@ cv::Mat DepthAnything::infer(cv::Mat& image)
 #endif
     // --- GPU Postprocessing ---
     // depth = 120 - torch.clamp(depth, min=0, max=120)
-    // PostProcess in the GPU:
-    // For each element: depth = 120 - clamp(depth, min=0, max=120)
-    int totalElements = input_h * input_w;
-    int threadsPerBlock = 256;
-    int blocks = (totalElements + threadsPerBlock - 1) / threadsPerBlock;
-    postprocessKernel<<<blocks, threadsPerBlock, 0, stream>>>((float*)buffer[1], totalElements);
+    int totalElements = img_h * img_w;
+    launchPostprocessKernel((float*) buffer[1], totalElements, stream);
     // --------------------------
 
     cudaStreamSynchronize(stream);
@@ -189,10 +172,7 @@ cv::Mat DepthAnything::infer(cv::Mat& image)
     // Postprocessing
     cudaMemcpyAsync(depth_data, buffer[1], input_h * input_w * sizeof(float), cudaMemcpyDeviceToHost);
 
-    // Convert the entire depth_data vector to a CV_32FC1 Mat
-    cv::Mat depth_mat(input_h, input_w, CV_32FC1, depth_data);
-    
-    return colormap;
+    return cv::Mat(input_h, input_w, CV_32FC1, depth_data).clone();  // ✅ Clone ensures ownership
 }
 
 
@@ -207,7 +187,7 @@ void DepthAnything::build(std::string onnxPath, nvinfer1::ILogger& logger)
         config->setFlag(BuilderFlag::kFP16);
     }
     nvonnxparser::IParser* parser = nvonnxparser::createParser(*network, logger);
-    bool parsed = parser->parseFromFile(onnxPath.c_str(), static_cast<int>(nvinfer1::ILogger::Severity::kINFO));
+    parser->parseFromFile(onnxPath.c_str(), static_cast<int>(nvinfer1::ILogger::Severity::kINFO));
     IHostMemory* plan{ builder->buildSerializedNetwork(*network, *config) };
 
     runtime = createInferRuntime(logger);

@@ -92,7 +92,7 @@ cmake -D CMAKE_BUILD_TYPE=RELEASE \
 ..
 
 # Compile using about half the available cores
-num_cores=$(($(nproc) / 2))
+num_cores=$(($(nproc) * 2 / 3))
 # If the number of cores is less than 1, set it to 1
 if [ $num_cores -lt 1 ]; then
     num_cores=1

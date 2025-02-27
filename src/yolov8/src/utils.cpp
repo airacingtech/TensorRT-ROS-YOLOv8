@@ -4,8 +4,8 @@ std::tuple<cv::Mat, int, int> resize_depth(cv::Mat& img, int w, int h)
 {
 	cv::Mat result;
 	int nw, nh;
-	int ih = img.rows;
-	int iw = img.cols;
+	// int ih = img.rows;
+	// int iw = img.cols;
 	float aspectRatio = (float)img.cols / (float)img.rows;
 
 	if (aspectRatio >= 1)

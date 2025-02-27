@@ -140,7 +140,7 @@ public:
 
     [[nodiscard]] const std::vector<nvinfer1::Dims3>& getInputDims() const { return m_inputDims; };
     [[nodiscard]] const std::vector<nvinfer1::Dims>& getOutputDims() const { return m_outputDims ;};
-    [[nodiscard]] const int getBatchSize() const { return batch_size_; };
+    [[nodiscard]] int getBatchSize() const { return batch_size_; };
 
     // Utility method for transforming triple nested output array into 2D array
     // Should be used when the output batch size is 1, but there are multiple output feature vectors

@@ -469,7 +469,7 @@ bool Engine::runInference(const std::vector<std::vector<cv::cuda::GpuMat>> &inpu
         // Iterate through the output buffers (as defined by the bindings of the optimization profile(s))
         // Start at index m_inputDims.size() to account for the inputs in our m_buffers
 // #if NV_TENSORRT_MAJOR < 10
-//   const int totalBindings = m_engine->getNbBindings();
+        const int totalBindings = m_engine->getNbBindings();
 // #else
 //   // Use an alternative function or adjust your logic
 //   const int totalBindings = m_engine->getNbIOTensors();
@@ -502,7 +502,7 @@ bool Engine::runInference(const std::vector<std::vector<cv::cuda::GpuMat>> &inpu
  * @return The GPU mat blob representing the converted batch.
  */
 cv::cuda::GpuMat Engine::blobFromGpuMats(const std::vector<cv::cuda::GpuMat>& batches, const std::array<float, 3>& subVals, const std::array<float, 3>& divVals, bool normalize) {
-    int batch_size = batches.size();
+    size_t batch_size = batches.size();
     int channels = batches[0].channels();
     int height = batches[0].rows;
     int width = batches[0].cols;
@@ -512,7 +512,8 @@ cv::cuda::GpuMat Engine::blobFromGpuMats(const std::vector<cv::cuda::GpuMat>& ba
 
     size_t img_channel_size = width * height;
     for (size_t batch = 0; batch < batch_size; batch++) {
-        cv::cuda::GpuMat input_channels[channels];
+        // cv::cuda::GpuMat input_channels[channels];
+        std::vector<cv::cuda::GpuMat> input_channels(channels);
         for (int j = 0; j < channels; j++) {
             input_channels[j] = cv::cuda::GpuMat(height, width, CV_8UC1, &(gpu_dst.ptr()[img_size * batch + img_channel_size * j]));
         }
@@ -727,6 +728,7 @@ bool Int8EntropyCalibrator2::getBatch(void **bindings, const char **names, int32
 
     if (m_imgIdx + m_batchSize > static_cast<int>(m_imgPaths.size())) {
         // There are not enough images left to satisfy an entire batch
+        nbBindings = nbBindings;
         return false;
     }
 

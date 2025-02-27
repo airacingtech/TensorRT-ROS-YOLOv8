@@ -8,6 +8,17 @@
 #include <opencv2/opencv.hpp>
 #include <NvInfer.h>
 #include "utils.h"
+#include <cuda_runtime.h>
+// #include "cuda_postprocess.h"
+
+// Ensure CUDA function is correctly linked
+#ifdef __cplusplus
+extern "C" {
+#endif
+void launchPostprocessKernel(float* depth, int totalElements, cudaStream_t stream);
+#ifdef __cplusplus
+}
+#endif
 
 class DepthAnything
 {
@@ -15,6 +26,7 @@ public:
 	DepthAnything();
     void init(std::string model_path, nvinfer1::ILogger& logger);
 	cv::Mat predict(cv::Mat& image);
+	cv::Mat infer(cv::Mat& image);
 	~DepthAnything();
 	
 private:
