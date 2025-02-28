@@ -22,6 +22,6 @@ struct DepthEstimation
 	}
 };
 
-
+bool endsWith(const std::string& str, const std::string& suffix);
 std::tuple<cv::Mat, int, int> resize_depth(cv::Mat& img, int w, int h);
 

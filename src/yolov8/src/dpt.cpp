@@ -78,6 +78,8 @@ DepthAnything::~DepthAnything()
 */
 std::vector<float> DepthAnything::preprocess(cv::Mat& image)
 {
+    // See if Cropping is necessary
+
     std::tuple<cv::Mat, int, int> resized = resize_depth(image, input_w, input_h);
     cv::Mat resized_image = std::get<0>(resized);
     std::vector<float> input_tensor;
@@ -142,6 +144,104 @@ cv::Mat DepthAnything::predict(cv::Mat& image)
 
     return colormap;
 }
+
+// cv::cuda::GpuMat DepthAnything::preprocess(const cv::cuda::GpuMat &input) {
+//     // Check if the input is large enough to perform the crop.
+//     if (input.cols < static_cast<int>(crop_width) || input.rows < static_cast<int>(crop_height)) {
+//         throw std::runtime_error("Input image is smaller than the crop dimensions.");
+//     }
+
+//     // Calculate the top-left corner for the center crop.
+//     int x = (input.cols - input_w) / 2;
+//     int y = (input.rows - input_h) / 2;
+
+//     // Define the region of interest (ROI) for the center crop.
+//     cv::Rect roi(x, y, input_w, input_h);
+
+//     // Return the cropped region.
+//     return input(roi);
+// }
+
+/*
+* Run inference on a batch of images. Note this function only support segmentation models.
+* 
+* @param gpuImgs: a vector of input images
+*/
+std::vector<cv::Mat> DepthAnything::detectObjects(std::vector<cv::cuda::GpuMat> &gpuImgs) {
+
+    // std::vector<cv::Mat> featureVectors;
+    for (size_t i = 0; i < gpuImgs.size(); ++i) {
+        std::vector<cv::cuda::GpuMat> input_batches = gpuImgs[i];
+        
+        // Copying the images into the GPU
+        // cv::cuda::GpuMat mfloat = blobFromGpuMats(input_batches, m_subVals, m_divVals, m_normalize);
+        // auto *dataPointer = mfloat.ptr<void>();
+        // checkCudaErrorCode(cudaMemcpyAsync(m_buffers[i], dataPointer,
+        //     // mfloat.cols * mfloat.rows * mfloat.channels() * sizeof(float),
+        //     blob_size,
+        //     cudaMemcpyDeviceToDevice, inferenceCudaStream));
+        cudaMemcpyAsync(buffer[0], input_batches.data(), 3 * input_h * input_w * sizeof(float), cudaMemcpyHostToDevice, stream);
+
+        // Run inference.
+        std::cout << "Running enqueueV3..." << std::endl;
+        bool status = context->enqueueV3(stream);
+        // if (!status) {
+        //     std::cout << "===== Error =====" << std::endl;
+        //     std::cout << "Error calling enqueueV3!" << std::endl;
+        //     return false;
+        // }
+
+        // TODO: Launch Postprocess
+        // int totalElements = input_w * input_h;
+        // launchPostprocessKernel((float*) buffer[1], totalElements, stream);
+
+        // auto succ = m_trtEngine->runInference(input, featureVectors);
+    }
+
+    if (!succ) {
+        throw std::runtime_error("Error: Unable to run inference.");
+    }
+#ifdef ENABLE_BENCHMARKS
+    static long long t2 = 0;
+    t2 += s2.elapsedTime<long long, std::chrono::microseconds>();
+    std::cout << "Avg Inference time: " << (t2 / numIts) / 1000.f << " ms" << std::endl;
+    preciseStopwatch s3;
+#endif
+    std::vector<std::vector<Object>> ret;
+    ret = postProcessSegmentation(featureVectors);
+#ifdef ENABLE_BENCHMARKS
+    static long long t3 = 0;
+    t3 +=  s3.elapsedTime<long long, std::chrono::microseconds>();
+    std::cout << "Avg Postprocess time: " << (t3 / numIts++) / 1000.f << " ms\n" << std::endl;
+#endif
+    return ret;
+}
+
+/**
+ * Uploads the batched input images to GPU memory and calls detectObjects(...) on the GPU images.
+ * 
+ * @param imgMat The batched images in BGR format.
+ * @return A vector of detected objects.
+ */
+std::vector<cv::Mat> DepthAnything::detectObjects(std::vector<cv::Mat> &imgMats) {
+    std::vector<cv::cuda::GpuMat> gpuImgs;
+
+    // TODO: Bench Upload with CUDA streams vs sequentially
+    for (const cv::Mat& img : imgMats) {
+
+        // TODO: Apply crop for DPT size
+        std::vector<float> input = preprocess(img);
+
+
+        cv::cuda::GpuMat gpuImg;
+        gpuImg.upload(img);
+        gpuImgs.push_back(gpuImg);
+    }
+    
+    // Call detectObjects with the GPU image
+    return detectObjects(gpuImgs);
+}
+
 
 cv::Mat DepthAnything::infer(cv::Mat& image)
 {

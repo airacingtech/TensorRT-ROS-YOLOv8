@@ -1,7 +1,7 @@
 #include <opencv2/cudaimgproc.hpp>
 #include "yolov8.h"
 
-YoloV8::YoloV8(const std::string& onnxModelPath, const YoloV8Config& config)
+YoloV8::YoloV8(const std::string& modelPath, const YoloV8Config& config)
         : PROBABILITY_THRESHOLD(config.probabilityThreshold)
         , NMS_THRESHOLD(config.nmsThreshold)
         , TOP_K(config.topK)
@@ -11,11 +11,12 @@ YoloV8::YoloV8(const std::string& onnxModelPath, const YoloV8Config& config)
         , SEGMENTATION_THRESHOLD(config.segmentationThreshold)
         , CLASS_NAMES(config.classNames)
         , NUM_KPS(config.numKPS)
-        , KPS_THRESHOLD(config.kpsThreshold) {
+        , KPS_THRESHOLD(config.kpsThreshold)
+         {
     // Specify options for GPU inference
     Options options;
-    options.optBatchSize = 4;
-    options.maxBatchSize = 4;
+    options.optBatchSize = 1;
+    options.maxBatchSize = 1;
 
     options.precision = config.precision;
     options.calibrationDataDirectoryPath = config.calibrationDataDirectory;
@@ -33,15 +34,18 @@ YoloV8::YoloV8(const std::string& onnxModelPath, const YoloV8Config& config)
     // Build the onnx model into a TensorRT engine file
     // If the engine file already exists, this function will return immediately
     // The engine file is rebuilt any time the above Options are changed.
-    auto succ = m_trtEngine->build(onnxModelPath, SUB_VALS, DIV_VALS, NORMALIZE);
-    if (!succ) {
-        const std::string errMsg = "Error: Unable to build the TensorRT engine. "
-                                   "Try increasing TensorRT log severity to kVERBOSE (in src/yolov8/libs/tensorrt-cpp-api/engine.cpp).";
-        throw std::runtime_error(errMsg);
+    bool succ;
+    if (endsWith(modelPath, ".onnx")){
+        succ = m_trtEngine->build(modelPath, SUB_VALS, DIV_VALS, NORMALIZE);
+        if (!succ) {
+            const std::string errMsg = "Error: Unable to build the TensorRT engine. "
+                                    "Try increasing TensorRT log severity to kVERBOSE (in src/yolov8/libs/tensorrt-cpp-api/engine.cpp).";
+            throw std::runtime_error(errMsg);
+        }
     }
-
+    
     // Load the TensorRT engine file
-    succ = m_trtEngine->loadNetwork(onnxModelPath);
+    succ = m_trtEngine->loadNetwork(modelPath);
     if (!succ) {
         throw std::runtime_error("Error: Unable to load TensorRT engine weights into memory.");
     }

@@ -1,0 +1,38 @@
+services:
+  art_driving_stack:
+      image: trtcs118_ocv:latest
+      # image: 722180079256.dkr.ecr.eu-central-1.amazonaws.com/dspace/iac_uva_demo_av_stack:2024-11-13
+      container_name: art_driving_stack
+      volumes:
+          - ~/testing/race_common:/home/chris/testing/race_common
+          - /media/chris/8d2fac78-a15f-43b1-8d0d-8655d972668b/rosbags/:/opt/rosbags
+          - /tmp/.X11-unix:/tmp/.X11-unix:rw  # Share X11 socket
+      entrypoint: tail -f /dev/null
+      runtime: nvidia
+      working_dir: /home/chris/testing/race_common
+      # pull_policy: always
+      environment:
+          - SIM_CLOCK_MODE=false
+          - DISPLAY=${DISPLAY}  # Pass host display to container
+          - QT_X11_NO_MITSHM=1  # Prevent shared memory issues
+          - NVIDIA_VISIBLE_DEVICES=all  # Allow all GPUs
+          - NVIDIA_DRIVER_CAPABILITIES=compute,utility,video  # Enable required GPU features
+      # networks:
+      #     mynetwork:
+      #         ipv4_address: 10.6.0.7
+      # depends_on:
+      #     veos:
+      #         condition: service_healthy
+      # secrets:
+      #     - host_ssh_key
+      # devices:
+      #   - /dev/input/js0:/dev/input/js0  # Map the joystick device
+      privileged: true
+
+
+# docker compose -f compose.yml up
+# source /opt/ros/iron/setup.bash
+# source ~/race_common/src/perception/TensorRT-ROS-YOLOv8/install/setup.bas
+# ros2 bag play /opt/rosbags/ks_2024/day15/perception_complete_multicar_2024_08_21-16_08_19/
+# docker exec -it art_driving_stack bash
+

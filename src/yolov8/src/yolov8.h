@@ -1,6 +1,7 @@
 #pragma once
 #include "engine.h"
 #include <fstream>
+#include "utils.h"
 
 // Utility method for checking if a file exists on disk
 inline bool doesFileExist(const std::string& name) {

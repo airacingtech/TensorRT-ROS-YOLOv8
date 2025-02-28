@@ -1,1 +1,3 @@
 typescript
+models/*
+!models/*.py

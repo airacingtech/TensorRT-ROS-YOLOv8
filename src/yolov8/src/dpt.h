@@ -27,11 +27,13 @@ public:
     void init(std::string model_path, nvinfer1::ILogger& logger);
 	cv::Mat predict(cv::Mat& image);
 	cv::Mat infer(cv::Mat& image);
+	std::vector<cv::Mat> detectObjects(std::vector<cv::Mat> &imgMat); // Batched version
+	std::vector<cv::Mat> detectObjects(std::vector<cv::cuda::GpuMat> &imgMat);  // Batched version
 	~DepthAnything();
 	
 private:
-	int input_w = 518;
-	int input_h = 518;
+	int input_w = 1008;
+	int input_h = 154;
 	float mean[3] = { 123.675, 116.28, 103.53 };
 	float std[3] = { 58.395, 57.12, 57.375 };
 

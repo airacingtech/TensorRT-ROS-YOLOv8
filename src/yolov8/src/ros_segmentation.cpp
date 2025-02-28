@@ -131,7 +131,7 @@ class PerceptionNode : public rclcpp::Node
                 // Add black images for missing topics
                 for (const std::string& topic : missing_topics) {
                     // TODO: MAKE IMAGE SIZE DYNAMIC
-                    images_map[topic] = cv::Mat::zeros(cv::Size(1056, 1056), CV_8UC3);
+                    images_map[topic] = cv::Mat::zeros(cv::Size(160, 1024), CV_8UC3);
                 }
             }
 
@@ -151,8 +151,8 @@ class PerceptionNode : public rclcpp::Node
             }
 
             // Run inference on DepthAnything
-            cv::Mat result_d = dpt_.infer(images[0]);
-            std::cout << "Depth Image Indferred and is Successful!!" << this->now().seconds() << std::endl;
+            std::vector<std::Mat> depth_maps = dpt_.detectObjects(images);
+            std::cout << "Depth Image inferred and is Successful!!" << this->now().seconds() << std::endl;
 
             size_t i = 0;
             for (const auto& batch : objects) {
@@ -211,26 +211,51 @@ class PerceptionNode : public rclcpp::Node
         * @param images: the map to store the preprocessed images
         */
         void preprocess_callback(std::map<std::string, cv::Mat>& images) {
+            // Define target dimensions (width, height)
+            int target_width = 1024;
+            int target_height = 160;
+            double target_aspect = static_cast<double>(target_width) / target_height;
+            
             for (const auto& pair : processing_buffer_) {
                 std::string camera_topic = pair.first;
                 const sensor_msgs::msg::Image::SharedPtr image_msg = pair.second;
-                try
-                    {
-                        // Share the memory with the original image
-                        // TODO: Should this be a copy to deal with a cleared buffer?
-                        cv_bridge::CvImageConstPtr cv_ptr;
-                        cv_ptr = cv_bridge::toCvShare(image_msg, sensor_msgs::image_encodings::RGB8);
-
-                        // Convert from RGB8 to BGR8
-                        cv::Mat img = cv_ptr->image;
-                        cv::cvtColor(img, img, cv::COLOR_RGB2BGR);
-
-                        images[camera_topic] = img;
-                    } catch (cv_bridge::Exception& e) {
-                        RCLCPP_ERROR(this->get_logger(), "Failed to convert ROS image message on topic %s \
-                            due to cv_bridge error: %s", camera_topic.c_str(), e.what());
-                        continue;
+                try {
+                    // Convert the ROS image to an OpenCV image in RGB8, then convert to BGR8.
+                    cv_bridge::CvImageConstPtr cv_ptr = cv_bridge::toCvShare(image_msg, sensor_msgs::image_encodings::RGB8);
+                    cv::Mat img = cv_ptr->image;
+                    cv::cvtColor(img, img, cv::COLOR_RGB2BGR);
+                    
+                    // Determine cropping rectangle based on the target aspect ratio.
+                    int orig_width = img.cols;
+                    int orig_height = img.rows;
+                    double orig_aspect = static_cast<double>(orig_width) / orig_height;
+                    
+                    cv::Rect crop_rect;
+                    if (orig_aspect < target_aspect) {
+                        // If the image is too narrow compared to target, use full width and crop the height.
+                        int crop_width = orig_width;
+                        int crop_height = static_cast<int>(orig_width / target_aspect);
+                        int y_offset = (orig_height - crop_height) / 2;
+                        crop_rect = cv::Rect(0, y_offset, crop_width, crop_height);
+                    } else {
+                        // If the image is too wide, use full height and crop the width.
+                        int crop_height = orig_height;
+                        int crop_width = static_cast<int>(orig_height * target_aspect);
+                        int x_offset = (orig_width - crop_width) / 2;
+                        crop_rect = cv::Rect(x_offset, 0, crop_width, crop_height);
                     }
+                    
+                    // Crop the image to the calculated rectangle.
+                    cv::Mat cropped = img(crop_rect);
+                    // Resize the cropped region to the target dimensions.
+                    cv::resize(cropped, img, cv::Size(target_width, target_height));
+                    
+                    images[camera_topic] = img;
+                } catch (cv_bridge::Exception& e) {
+                    RCLCPP_ERROR(this->get_logger(), "Failed to convert ROS image message on topic %s \
+                        due to cv_bridge error: %s", camera_topic.c_str(), e.what());
+                    continue;
+                }
             }
         }
 
@@ -445,23 +470,26 @@ class LoggerTRT : public nvinfer1::ILogger {
 
 int main(int argc, char *argv[]) {
     YoloV8Config config;
-    std::string yolo_onnxModelPath = "models/batch4-542_731.onnx";
-    std::string dpt_onnxModelPath = "";
+    std::string yolo_ModelPath = "/home/chris/testing/race_common/src/perception/TensorRT-ROS-YOLOv8/src/yolov8/models/best.onnx";
+    std::string dpt_ModelPath = "/home/chris/testing/race_common/src/perception/TensorRT-ROS-YOLOv8/src/yolov8/models/engines/DepthAnythingv1_11-Dec_12-04-50740ac911a2_latest_opset19.engine";
 
-    // // Parse arguments
-    // std::string parseArgsError = parseArgs(argc, argv, config, yolo_onnxModelPath);
-    // if (!parseArgsError.empty()) {
-    //     RCLCPP_WARN(rclcpp::get_logger("rclcpp"), "YOLOv8 arguement parser: %s", parseArgsError.c_str());
-    // }
+    // Parse arguments
+    std::string parseArgsError = parseArguments(argc, argv, config, yolo_ModelPath, dpt_ModelPath);
+    if (!parseArgsError.empty()) {
+        RCLCPP_WARN(rclcpp::get_logger("rclcpp"), "YOLOv8 arguement parser: %s", parseArgsError.c_str());
+    }
+
     // Create the YoloV8 engine
     RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "Creating YoloV8 engine --- Could take a while if Engine file is not already built and cached.");
-    YoloV8 yoloV8(yolo_onnxModelPath, config);
+    // create models/engines folder
+
+    YoloV8 yoloV8(yolo_ModelPath, config);
     RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "YoloV8 engine created and loaded into memory.");
 
     // Create the DepthAnything engine
     RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "Creating DepthAnything engine --- Could take a while if Engine file is not already built and cached.");
     DepthAnything dpt;
-    dpt.init(dpt_onnxModelPath, logger_trt);
+    dpt.init(dpt_ModelPath, logger_trt);
     RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "DepthAnything engine created and loaded into memory.");
 
     // Create ROS2 Node
