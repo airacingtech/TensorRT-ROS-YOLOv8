@@ -1,64 +1,67 @@
 cmake_minimum_required(VERSION 3.8)
 project(yolov8)
 
+# Set compiler warnings if using GCC or Clang
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
-# Set CUDA early so OpenCV can find it
-# Set the version of CUDA to use
-set(CUDA_VERSION "11.8")
-# # Use the correct version of CUDA
-set(CUDA_TOOLKIT_ROOT_DIR "/usr/local/cuda-${CUDA_VERSION}")
-# # Set CMAKE_CUDA_COMPILER to the correct version of nvcc
-set(CMAKE_CUDA_COMPILER "/usr/local/cuda-${CUDA_VERSION}/bin/nvcc")
+# Find CUDA
+find_package(CUDA REQUIRED)
+# # Set CUDA paths
+# link_directories(${CUDA_LIBRARY_DIRS})
+message(STATUS "Found CUDA: ${CUDA_VERSION} at ${CUDA_TOOLKIT_ROOT_DIR}")
+# Add OpenCV to LD_LIBRARY_PATH
+# SET(ENV{LD_LIBRARY_PATH} "/home/chris/testing/race_common/src/perception/TensorRT-ROS-YOLOv8/src/yolov8/scripts/opencv_build_files/opencv-4.8.0/build/lib:$ENV{LD_LIBRARY_PATH}")
 
-# Find dependencies
+# Find ROS2 dependencies
 find_package(ament_cmake_auto REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(cv_bridge REQUIRED)
 find_package(yolov8_interfaces REQUIRED)
 
-if(BUILD_TESTING)
-  find_package(ament_lint_auto REQUIRED)
-  # the following line skips the linter which checks for copyrights
-  # comment the line when a copyright and license is added to all source files
-  set(ament_cmake_copyright_FOUND TRUE)
-  # the following line skips cpplint (only works in a git repo)
-  # comment the line when this package is in a git repo and when
-  # a copyright and license is added to all source files
-  set(ament_cmake_cpplint_FOUND TRUE)
-  ament_lint_auto_find_test_dependencies()
-endif()
-
-# Use ccache to speed up rebuilds
-# include(cmake/ccache.cmake)
-
 # Set C++ version and optimization level
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Ofast -DNDEBUG -Wno-deprecated-declarations")
 
-# # CMake Options
-# option(ENABLE_BENCHMARKS "Benchmark the preprocessing, inference, and post processing" OFF)
-# if (ENABLE_BENCHMARKS)
-#     add_compile_definitions(ENABLE_BENCHMARKS)
-# endif()
+include_directories(
+  ${CUDA_INCLUDE_DIRS}
+)
+
+# # Use ccache to speed up rebuilds
+# include(cmake/ccache.cmake)
 
 # Build the TensorRT inference engine library
-# TensorRT is found and linked by the tensorrt-cpp-api
 add_subdirectory(libs/tensorrt-cpp-api)
 
 # Build the YoloV8 library
-add_library(YoloV8_TRT SHARED src/yolov8.cpp)
+add_library(YoloV8_TRT SHARED src/yolov8.cpp src/utils.cpp)
 target_link_libraries(YoloV8_TRT PUBLIC tensorrt_cpp_api ${OpenCV_LIBS})
 target_include_directories(YoloV8_TRT PUBLIC libs/tensorrt-cpp-api/src)
 
+# Build the DPT Library for depth estimation
+cuda_add_library(cuda_postprocessing SHARED src/cuda_kernels/dpt_postprocess.cu)
+add_library(DPT_TRT SHARED src/dpt.cpp src/utils.cpp)
+target_include_directories(DPT_TRT PUBLIC 
+  ${OpenCV_INCLUDE_DIRS} 
+  ${CUDA_INCLUDE_DIRS} 
+  ${TensorRT_INCLUDE_DIRS}
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/cuda_kernels
+)
+target_link_libraries(DPT_TRT PUBLIC ${OpenCV_LIBS} ${CUDA_LIBRARIES} ${TensorRT_LIBRARIES} cuda_postprocessing)
+
+# # Add utility library for command line arguments
+# add_library(CmdLineUtil SHARED src/cmd_line_util.h)
+# target_include_directories(CmdLineUtil PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
+# Build ROS2 node
 add_executable(ros_segmentation src/ros_segmentation.cpp)
 ament_target_dependencies(ros_segmentation rclcpp sensor_msgs cv_bridge yolov8_interfaces)
-target_link_libraries(ros_segmentation YoloV8_TRT)
+# target_link_libraries(ros_segmentation YoloV8_TRT)
+target_link_libraries(ros_segmentation YoloV8_TRT DPT_TRT)
 
-#
+# Install targets
 install(TARGETS
   ros_segmentation
   DESTINATION lib/${PROJECT_NAME}
@@ -68,6 +71,8 @@ install(TARGETS
 install(TARGETS
   YoloV8_TRT
   tensorrt_cpp_api
+  DPT_TRT
+  cuda_postprocessing
   LIBRARY DESTINATION lib
   ARCHIVE DESTINATION lib
   RUNTIME DESTINATION bin
@@ -83,6 +88,7 @@ install(DIRECTORY
   PATTERN ".gitignore" EXCLUDE # Exclude .gitignore files from being installed
 )
 
+# Install environment file
 install(FILES
   ../../yolov8.env
   DESTINATION share/${PROJECT_NAME}
@@ -92,4 +98,5 @@ install(FILES
 ament_export_include_directories(include)
 ament_export_libraries(YOLOV8_TRT tensorrt_cpp_api yolov8_interfaces)
 
+# Generate package information
 ament_package()

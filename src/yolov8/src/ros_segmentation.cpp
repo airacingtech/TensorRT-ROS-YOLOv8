@@ -20,19 +20,44 @@ class YoloV8Node : public rclcpp::Node
         YoloV8Node(YoloV8& yoloV8)
         : Node("yolo_v8"), yoloV8_(yoloV8)
         {
-            // Get ROS parameters
-            this->declare_parameter("camera_topics", camera_topics_);
+            // Declare parameters with their default values.
+            this->declare_parameter<std::vector<std::string>>("camera_topics", std::vector<std::string>{"/vimba_rear"});
+            this->declare_parameter<std::string>("camera_topic_suffix", "/image");
+            this->declare_parameter<float>("camera_buffer_hz", 25.0);
+            this->declare_parameter<bool>("visualize_masks", true);
+            this->declare_parameter<bool>("enable_one_channel_mask", true);
+            this->declare_parameter<bool>("visualize_one_channel_mask", true);
+            this->declare_parameter<int>("target_width", 1024);
+            this->declare_parameter<int>("target_height", 160);
+
+
+            // Retrieve parameters and store them in member variables.
             this->get_parameter("camera_topics", camera_topics_);
-            this->declare_parameter("camera_topic_suffix", camera_topic_suffix_);
             this->get_parameter("camera_topic_suffix", camera_topic_suffix_);
-            this->declare_parameter("camera_buffer_hz", camera_buffer_hz_);
             this->get_parameter("camera_buffer_hz", camera_buffer_hz_);
-            this->declare_parameter("visualize_masks", visualize_masks_);
             this->get_parameter("visualize_masks", visualize_masks_);
-            this->declare_parameter("enable_one_channel_mask", enable_one_channel_mask_);
             this->get_parameter("enable_one_channel_mask", enable_one_channel_mask_);
-            this->declare_parameter("visualize_one_channel_mask", visualize_one_channel_mask_);
             this->get_parameter("visualize_one_channel_mask", visualize_one_channel_mask_);
+            this->get_parameter("target_width", target_width_);
+            this->get_parameter("target_height", target_height_);
+
+            // // Get ROS parameters
+            // this->declare_parameter("camera_topics", camera_topics_);
+            // this->get_parameter("camera_topics", camera_topics_);
+            // this->declare_parameter("camera_topic_suffix", camera_topic_suffix_);
+            // this->get_parameter("camera_topic_suffix", camera_topic_suffix_);
+            // this->declare_parameter("camera_buffer_hz", camera_buffer_hz_);
+            // this->get_parameter("camera_buffer_hz", camera_buffer_hz_);
+            // this->declare_parameter("visualize_masks", visualize_masks_);
+            // this->get_parameter("visualize_masks", visualize_masks_);
+            // this->declare_parameter("enable_one_channel_mask", enable_one_channel_mask_);
+            // this->get_parameter("enable_one_channel_mask", enable_one_channel_mask_);
+            // this->declare_parameter("visualize_one_channel_mask", visualize_one_channel_mask_);
+            // this->get_parameter("visualize_one_channel_mask", visualize_one_channel_mask_);
+            // this->declare_parameter("target_width", target_width_);
+            // this->get_parameter("target_width", target_width_);
+            // this->declare_parameter("target_height", target_height_);
+            // this->get_parameter("target_height", target_height_);
 
             // Create timer for camera synchronization
             float buffer_duration = 1 / camera_buffer_hz_;
@@ -127,14 +152,20 @@ class YoloV8Node : public rclcpp::Node
                 return;
             } else {
                 // Add black images for missing topics
+                // Log target width and height
+                RCLCPP_INFO(this->get_logger(), "Target image size: %dx%d", target_width_, target_height_);
                 for (const std::string& topic : missing_topics) {
                     // TODO: MAKE IMAGE SIZE DYNAMIC
-                    images_map[topic] = cv::Mat::zeros(cv::Size(1056, 1056), CV_8UC3);
+                    images_map[topic] = cv::Mat::zeros(cv::Size(target_width_, target_height_), CV_8UC3);
                 }
             }
 
             // Preprocess the input
             preprocess_callback(images_map);
+            // Check the image sizes
+            for (const auto& pair : images_map) {
+                RCLCPP_INFO(this->get_logger(), "Preprocessed image size: %dx%d", pair.second.cols, pair.second.rows);
+            }
 
             // Place map values into a vector
             std::vector<cv::Mat> images;
@@ -143,7 +174,9 @@ class YoloV8Node : public rclcpp::Node
             }
 
             // Run inference
+            RCLCPP_INFO(this->get_logger(), "Running inference");
             std::vector<std::vector<Object>> objects = yoloV8_.detectObjects(images);
+            RCLCPP_INFO(this->get_logger(), "Inference complete");
 
             if (objects.size() == 0) {
                std::cout << "No objects detected at time " << this->now().seconds() << std::endl;
@@ -177,6 +210,9 @@ class YoloV8Node : public rclcpp::Node
         std::pair<std::vector<std::string>, std::vector<std::string>> checkCameraTopicsInBuffer() {
             std::vector<std::string> missing_topics;
             std::vector<std::string> processing_topics;
+            RCLCPP_INFO(this->get_logger(), "Checking camera topics in the processing buffer");
+            RCLCPP_INFO(this->get_logger(), "Processing buffer size: %zu", processing_buffer_.size());
+            RCLCPP_INFO(this->get_logger(), "Camera topics size: %zu", camera_topics_.size());
             if (processing_buffer_.size() == camera_topics_.size()) {
                 std::cout << "All camera topics are in the processing buffer" << std::endl;
                 for (const std::string& topic : camera_topics_) {
@@ -205,6 +241,55 @@ class YoloV8Node : public rclcpp::Node
         *
         * @param images: the map to store the preprocessed images
         */
+        // void preprocess_callback(std::map<std::string, cv::Mat>& images) {
+        //     for (const auto& pair : processing_buffer_) {
+        //         std::string camera_topic = pair.first;
+        //         const sensor_msgs::msg::Image::SharedPtr image_msg = pair.second;
+        //         try
+        //             {
+        //                 // Share the memory with the original image
+        //                 // TODO: Should this be a copy to deal with a cleared buffer?
+        //                 cv_bridge::CvImageConstPtr cv_ptr;
+        //                 cv_ptr = cv_bridge::toCvShare(image_msg, sensor_msgs::image_encodings::RGB8);
+
+        //                 // Convert from RGB8 to BGR8
+        //                 cv::Mat img = cv_ptr->image;
+        //                 cv::cvtColor(img, img, cv::COLOR_RGB2BGR);
+
+        //                 images[camera_topic] = img;
+        //             } catch (cv_bridge::Exception& e) {
+        //                 RCLCPP_ERROR(this->get_logger(), "Failed to convert ROS image message on topic %s \
+        //                     due to cv_bridge error: %s", camera_topic.c_str(), e.what());
+        //                 continue;
+        //             }
+        //     }
+        // }
+
+        // void preprocess_callback(std::map<std::string, cv::Mat>& images) {
+        //     for (const auto& pair : processing_buffer_) {
+        //         std::string camera_topic = pair.first;
+        //         const sensor_msgs::msg::Image::SharedPtr image_msg = pair.second;
+        //         try {
+        //             // Convert the ROS image message to a cv::Mat (using shared memory)
+        //             cv_bridge::CvImageConstPtr cv_ptr = cv_bridge::toCvShare(image_msg, sensor_msgs::image_encodings::RGB8);
+        //             cv::Mat img = cv_ptr->image;
+                    
+        //             // Convert from RGB8 to BGR8 as required
+        //             cv::cvtColor(img, img, cv::COLOR_RGB2BGR);
+                    
+        //             // Resize the image to the target dimensions
+        //             cv::resize(img, img, cv::Size(target_width_, target_height_));
+                    
+        //             // Store the preprocessed (resized) image in the images map
+        //             images[camera_topic] = img;
+        //         } catch (cv_bridge::Exception& e) {
+        //             RCLCPP_ERROR(this->get_logger(), "Failed to convert ROS image message on topic %s due to cv_bridge error: %s",
+        //                          camera_topic.c_str(), e.what());
+        //             continue;
+        //         }
+        //     }
+        // }
+
         void preprocess_callback(std::map<std::string, cv::Mat>& images) {
             for (const auto& pair : processing_buffer_) {
                 std::string camera_topic = pair.first;
@@ -220,6 +305,8 @@ class YoloV8Node : public rclcpp::Node
                         cv::Mat img = cv_ptr->image;
                         cv::cvtColor(img, img, cv::COLOR_RGB2BGR);
 
+                        cv::resize(img, img, cv::Size(target_width_, target_height_));
+
                         images[camera_topic] = img;
                     } catch (cv_bridge::Exception& e) {
                         RCLCPP_ERROR(this->get_logger(), "Failed to convert ROS image message on topic %s \
@@ -228,6 +315,64 @@ class YoloV8Node : public rclcpp::Node
                     }
             }
         }
+
+        // void preprocess_callback(std::map<std::string, cv::Mat>& images) {
+            
+
+        //     double target_aspect = static_cast<double>(target_width_) / target_height_;
+        //     RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "Target aspect: %f", target_aspect);
+        //     RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "Target width: %d", target_width_);
+        //     RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "Target height: %d", target_height_);
+        //     for (const auto& pair : processing_buffer_) {
+        //         std::string camera_topic = pair.first;
+        //         const sensor_msgs::msg::Image::SharedPtr image_msg = pair.second;
+        //         try
+        //             {
+        //                 // Share the memory with the original image
+        //                 // TODO: Should this be a copy to deal with a cleared buffer?
+        //                 cv_bridge::CvImagePtr cv_ptr = cv_bridge::toCvCopy(image_msg, sensor_msgs::image_encodings::RGB8);
+        //                 cv::Mat img = cv_ptr->image;
+        //                 cv::cvtColor(img, img, cv::COLOR_RGB2BGR);
+                        
+        //                 // Determine cropping rectangle based on the target aspect ratio.
+        //                 int orig_width = img.cols;
+        //                 int orig_height = img.rows;
+        //                 double orig_aspect = static_cast<double>(orig_width) / orig_height;
+
+        //                 RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "Orig aspect: %f", orig_aspect);
+
+        //                 cv::Rect crop_rect;
+        //                 if (orig_aspect < target_aspect) {
+        //                     // If the image is too narrow compared to target, use full width and crop the height.
+        //                     int crop_width = orig_width;
+        //                     int crop_height = static_cast<int>(orig_width / target_aspect);
+        //                     int y_offset = (orig_height - crop_height) / 2;
+        //                     crop_rect = cv::Rect(0, y_offset, crop_width, crop_height);
+        //                 } else {
+        //                     // If the image is too wide, use full height and crop the width.
+        //                     int crop_height = orig_height;
+        //                     int crop_width = static_cast<int>(orig_height * target_aspect);
+        //                     int x_offset = (orig_width - crop_width) / 2;
+        //                     crop_rect = cv::Rect(x_offset, 0, crop_width, crop_height);
+        //                 }
+                        
+        //                 // Crop the image to the calculated rectangle.
+        //                 cv::Mat cropped = img(crop_rect);
+        //                 // Resize the cropped region to the target dimensions.
+        //                 cv::resize(cropped, img, cv::Size(target_width_, target_height_));    
+                        
+        //                 RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "Cropped aspect: %f", static_cast<double>(img.cols) / img.rows);
+        //                 RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "Cropped width: %d", img.cols);
+        //                 RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "Cropped height: %d", img.rows);
+
+        //                 images[camera_topic] = img;
+        //             } catch (cv_bridge::Exception& e) {
+        //                 RCLCPP_ERROR(this->get_logger(), "Failed to convert ROS image message on topic %s \
+        //                     due to cv_bridge error: %s", camera_topic.c_str(), e.what());
+        //                 continue;
+        //             }
+        //     }
+        // }
 
         /*
         * Convert output(s) from Neural Network to ROS messages and publish them
@@ -413,10 +558,14 @@ class YoloV8Node : public rclcpp::Node
 
         std::vector<std::string> camera_topics_;
         std::string camera_topic_suffix_;
-        float camera_buffer_hz_ = 30;
+        float camera_buffer_hz_ = 25;
         bool visualize_masks_;
         bool enable_one_channel_mask_;
         bool visualize_one_channel_mask_;
+        int target_width_;
+        int target_height_;
+        double target_aspect;
+
         std::map<std::string, rclcpp::Publisher<yolov8_interfaces::msg::Yolov8Detections>::SharedPtr> detection_publishers_;
         std::map<std::string, rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr> image_publishers_;
         std::map<std::string, rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr> one_channel_mask_publishers_;

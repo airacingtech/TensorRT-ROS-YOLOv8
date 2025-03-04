@@ -45,6 +45,8 @@ def generate_launch_description():
     seg_h = env.int("SEG_H")
     seg_w = env.int("SEG_W")
     segmentation_threshold = env.float("SEGMENTATION_THRESHOLD")
+    target_width = env.int("TARGET_WIDTH")
+    target_height = env.int("TARGET_HEIGHT")
     # class_names = env("CLASS_NAMES").split(",")
 
     print("YOLOv8 Parameters:")
@@ -66,6 +68,9 @@ def generate_launch_description():
     print(f"seg_h: {seg_h}")
     print(f"seg_w: {seg_w}")
     print(f"segmentation_threshold: {segmentation_threshold}")
+    print(f"target_width: {target_width}")
+    print(f"target_height: {target_height}")
+    
     # print(f"class_names: {class_names}")
 
     # Convert the list of class names into several strings separated by "" to be read as a command
@@ -86,6 +91,8 @@ def generate_launch_description():
                 'visualize_masks': visualize_masks,
                 'enable_one_channel_mask': enable_one_channel_mask,
                 'visualize_one_channel_mask': visualize_one_channel_mask,
+                'target_width': target_width,
+                'target_height': target_height,
             }],
             arguments=[
                 '--model', model_dir,
