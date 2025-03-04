@@ -1,6 +1,7 @@
 # include <mutex>
 
 #include "yolov8.h"
+#include "dpt.h"
 #include "cmd_line_util.h"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/image.hpp"
@@ -17,8 +18,8 @@ using std::placeholders::_1;
 class YoloV8Node : public rclcpp::Node
 {
     public:
-        YoloV8Node(YoloV8& yoloV8)
-        : Node("yolo_v8"), yoloV8_(yoloV8)
+        YoloV8Node(YoloV8& yoloV8, DepthAnything& dpt)
+        : Node("yolo_v8"), yoloV8_(yoloV8), dpt_(dpt)
         {
             // Declare parameters with their default values.
             this->declare_parameter<std::vector<std::string>>("camera_topics", std::vector<std::string>{"/vimba_rear"});
@@ -27,9 +28,8 @@ class YoloV8Node : public rclcpp::Node
             this->declare_parameter<bool>("visualize_masks", true);
             this->declare_parameter<bool>("enable_one_channel_mask", true);
             this->declare_parameter<bool>("visualize_one_channel_mask", true);
-            this->declare_parameter<int>("target_width", 1024);
-            this->declare_parameter<int>("target_height", 160);
-
+            this->declare_parameter<int>("target_width", 1056);
+            this->declare_parameter<int>("target_height", 1056);
 
             // Retrieve parameters and store them in member variables.
             this->get_parameter("camera_topics", camera_topics_);
@@ -108,6 +108,9 @@ class YoloV8Node : public rclcpp::Node
                 one_channel_mask_publishers_[topic] = this->create_publisher<sensor_msgs::msg::Image>(
                     "/yolov8" + topic + "/seg_mask_one_channel", qos_profile
                 );
+                one_channel_depth_publishers_[topic] = this->create_publisher<sensor_msgs::msg::Image>(
+                    "/yolov8" + topic + "/seg_depth_one_channel", qos_profile
+                );
             }
         }
 
@@ -174,9 +177,14 @@ class YoloV8Node : public rclcpp::Node
             }
 
             // Run inference
-            RCLCPP_INFO(this->get_logger(), "Running inference");
+            RCLCPP_INFO(this->get_logger(), "Running YoloV8 inference");
             std::vector<std::vector<Object>> objects = yoloV8_.detectObjects(images);
-            RCLCPP_INFO(this->get_logger(), "Inference complete");
+            RCLCPP_INFO(this->get_logger(), "Inference YoloV8 complete");
+
+            // For REAR Perception, this only:
+            RCLCPP_INFO(this->get_logger(), "Running DPT inference");
+            cv::Mat depth_output = dpt_.predict(images[0]);
+            RCLCPP_INFO(this->get_logger(), "Inference DPT complete");
 
             if (objects.size() == 0) {
                std::cout << "No objects detected at time " << this->now().seconds() << std::endl;
@@ -199,7 +207,7 @@ class YoloV8Node : public rclcpp::Node
             // RCLCPP_INFO(this->get_logger(), "Mask Shape: %s", objects[0].boxMask.size());
 
             // Postprocess the output and publish the results
-            postprocess_callback(images_map, objects, images, missing_topics);
+            postprocess_callback(images_map, objects, images, depth_output, missing_topics);
         }
 
         /*
@@ -304,9 +312,6 @@ class YoloV8Node : public rclcpp::Node
                         // Convert from RGB8 to BGR8
                         cv::Mat img = cv_ptr->image;
                         cv::cvtColor(img, img, cv::COLOR_RGB2BGR);
-
-                        cv::resize(img, img, cv::Size(target_width_, target_height_));
-
                         images[camera_topic] = img;
                     } catch (cv_bridge::Exception& e) {
                         RCLCPP_ERROR(this->get_logger(), "Failed to convert ROS image message on topic %s \
@@ -382,7 +387,9 @@ class YoloV8Node : public rclcpp::Node
         * @param missing_topics: The camera topics that were missing from the processing buffer
         */
         void postprocess_callback(std::map<std::string, cv::Mat> images_map, std::vector<std::vector<Object>> objects,
-                std::vector<cv::Mat> images, std::vector<std::string> missing_topics) {
+                std::vector<cv::Mat> images, 
+                cv::Mat& depth_map,
+                std::vector<std::string> missing_topics) {
 
             int i = 0;
             for (const auto& pair : images_map) {
@@ -403,7 +410,8 @@ class YoloV8Node : public rclcpp::Node
                 if (enable_one_channel_mask_) {
                     // TODO fix how batched objects are handled
                     publishOneChannelMask(objects[i], visualize_one_channel_mask_, image_msg, detectionMsg,
-                        topic);
+                            depth_map,
+                            topic);
                 }
 
                 // Draw the segmentation masks and bounding boxes on the image
@@ -462,6 +470,7 @@ class YoloV8Node : public rclcpp::Node
         void publishOneChannelMask(std::vector<Object> objects, bool visualize_one_channel_mask,
                 const sensor_msgs::msg::Image::ConstSharedPtr& image_msg,
                 yolov8_interfaces::msg::Yolov8Detections &detectionMsg,
+                cv::Mat& depthimage,
                 const std::string topic) {
             cv::Mat oneChannelMask;
             int img_width = image_msg->width;
@@ -481,11 +490,23 @@ class YoloV8Node : public rclcpp::Node
             // Publish the one channel mask with RGB color for visualization only
             if (visualize_one_channel_mask) {
                 cv::Mat oneChannelMaskRGB8 = visualizeOneChannelMask(oneChannelMask);
+                cv::Mat oneChannelDepthRGB8 = visualizeDepth(depthimage);
                 try {
                     cv_bridge::CvImage cvBridgeOneChannelMaskRGB8 = cv_bridge::CvImage(
                         image_msg->header, "rgb8", oneChannelMaskRGB8
                     );
                     one_channel_mask_publishers_[topic]->publish(*cvBridgeOneChannelMaskRGB8.toImageMsg());
+                    
+                } catch (cv_bridge::Exception& e) {
+                    RCLCPP_ERROR(this->get_logger(), "cv_bridge exception: %s", e.what());
+                    return;
+                }
+                try {
+                    cv_bridge::CvImage cvBridgeOneChannelDepthRGB8 = cv_bridge::CvImage(
+                        image_msg->header, "rgb8", oneChannelDepthRGB8
+                    );
+                    one_channel_depth_publishers_[topic]->publish(*cvBridgeOneChannelDepthRGB8.toImageMsg());
+                    
                 } catch (cv_bridge::Exception& e) {
                     RCLCPP_ERROR(this->get_logger(), "cv_bridge exception: %s", e.what());
                     return;
@@ -556,6 +577,19 @@ class YoloV8Node : public rclcpp::Node
             }
         }
 
+        cv::Mat visualizeDepth(cv::Mat& depth_mat) const {
+            try {
+                cv::normalize(depth_mat, depth_mat, 0, 255, cv::NORM_MINMAX, CV_8U);
+                // Create a colormap from the depth data
+                cv::Mat colormap;
+                cv::applyColorMap(depth_mat, colormap, cv::COLORMAP_INFERNO);
+                return colormap;
+            } catch (cv::Exception& e) {
+                RCLCPP_ERROR(this->get_logger(), "OpenCV exception: %s", e.what());
+                return cv::Mat();
+            }
+        }
+
         std::vector<std::string> camera_topics_;
         std::string camera_topic_suffix_;
         float camera_buffer_hz_ = 25;
@@ -569,6 +603,8 @@ class YoloV8Node : public rclcpp::Node
         std::map<std::string, rclcpp::Publisher<yolov8_interfaces::msg::Yolov8Detections>::SharedPtr> detection_publishers_;
         std::map<std::string, rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr> image_publishers_;
         std::map<std::string, rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr> one_channel_mask_publishers_;
+        std::map<std::string, rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr> one_channel_depth_publishers_;
+
         rclcpp::TimerBase::SharedPtr buffer_timer_;
         std::map<std::string, sensor_msgs::msg::Image::SharedPtr> current_buffer_;
         std::map<std::string, sensor_msgs::msg::Image::SharedPtr> processing_buffer_;
@@ -576,24 +612,44 @@ class YoloV8Node : public rclcpp::Node
 
         std::vector<rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr> subscriptions_;
         YoloV8& yoloV8_;
+        DepthAnything& dpt_;
         };
+
+class LoggerTRT : public nvinfer1::ILogger {
+    void log(Severity severity, const char* msg) noexcept override {
+        // Only output logs with severity greater than warning
+        if (severity <= Severity::kWARNING)
+            std::cout << msg << std::endl;
+    }
+}logger_trt;
 
 int main(int argc, char *argv[]) {
     YoloV8Config config;
-    std::string onnxModelPath;
+    std::string yolo_ModelPath = "/home/chris/testing/race_common/src/perception/TensorRT-ROS-YOLOv8/src/yolov8/models/best.onnx";
+    std::string dpt_ModelPath = "/home/chris/testing/race_common/src/perception/TensorRT-ROS-YOLOv8/src/yolov8/models/engines/DepthAnythingv1_11-Dec_12-04-50740ac911a2_latest_opset19.engine";
 
-    std::string parseArgsError = parseArguments(argc, argv, config, onnxModelPath);
+    // Parse arguments
+    std::string parseArgsError = parseArguments(argc, argv, config, yolo_ModelPath, dpt_ModelPath);
     if (!parseArgsError.empty()) {
         RCLCPP_WARN(rclcpp::get_logger("rclcpp"), "YOLOv8 arguement parser: %s", parseArgsError.c_str());
     }
+
     // Create the YoloV8 engine
     RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "Creating YoloV8 engine --- Could take a while if Engine file is not already built and cached.");
-    YoloV8 yoloV8(onnxModelPath, config);
+    // create models/engines folder
+
+    YoloV8 yoloV8(yolo_ModelPath, config);
     RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "YoloV8 engine created and loaded into memory.");
+
+    // Create the DepthAnything engine
+    RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "Creating DepthAnything engine --- Could take a while if Engine file is not already built and cached.");
+    DepthAnything dpt;
+    dpt.init(dpt_ModelPath, logger_trt);
+    RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "DepthAnything engine created and loaded into memory.");
 
     // Create ROS2 Node
     rclcpp::init(argc, argv);
-    rclcpp::spin(std::make_shared<YoloV8Node>(yoloV8));
+    rclcpp::spin(std::make_shared<YoloV8Node>(yoloV8, dpt));
     rclcpp::shutdown();
     return 0;
 }

@@ -6,7 +6,8 @@ inline void showHelp(char* argv[]) {
     std::cout << "Usage: " << argv[0] << " [OPTIONS]" << std::endl << std::endl;
 
     std::cout << "Options:" << std::endl;
-    std::cout << "--model <string>                  Path to the ONNX model. (Mandatory)" << std::endl;
+    std::cout << "--yolo-model-filepath <string>    Path to the ONNX/engine model. (Mandatory)" << std::endl;
+    std::cout << "--dpt-model-filepath <string>     Path to the ONNX/engine model. (Mandatory)" << std::endl;
     std::cout << "--input <string || int>           Input source for detection. Accepts a path to an image file. For video detection, must be path to video source, or video index. (Mandatory)" << std::endl;
     std::cout << "--precision <string>              Precision to be used for inference. Options include FP32, FP16, and INT8 (Default: FP16)" << std::endl;
     std::cout << "--calibration-data <string>       Path to calibration data. (Mandatory if precision is INT8)" << std::endl;
@@ -20,7 +21,7 @@ inline void showHelp(char* argv[]) {
     std::cout << "--class-names <string list>       Sets the names of object classes to be recognized by the detector. Provide the class names separated by spaces. (Default: COCO class names)" << std::endl << std::endl;
 
     std::cout << "Example usage:" << std::endl;
-    std::cout << argv[0] << " --model model.onnx --input image.png --precision FP16 --calibration-data /data/coco/validation/ --prob-threshold 0.3 --nms-threshold 0.5 --top-k 50 --seg-channels 64 --seg-h 192 --seg-w 192 --seg-threshold 0.4 --class-names cat dog car person" << std::endl;
+    std::cout << argv[0] << " --yolo-model-filepath model.onnx --input image.png --precision FP16 --calibration-data /data/coco/validation/ --prob-threshold 0.3 --nms-threshold 0.5 --top-k 50 --seg-channels 64 --seg-h 192 --seg-w 192 --seg-threshold 0.4 --class-names cat dog car person" << std::endl;
 }
 
 inline bool tryGetNextArgument(int argc, char* argv[], int& currentIndex, std::string& value, std::string flag, bool printErrors = true) {
@@ -63,7 +64,7 @@ inline bool tryParseFloat(const std::string& s, float& value, const std::string&
     }
 }
 
-inline std::string parseArguments(int argc, char* argv[], YoloV8Config& config, std::string& onnxModelPath) {
+inline std::string parseArguments(int argc, char* argv[], YoloV8Config& config, std::string& yolo_ModelPath, std::string& dpt_ModelPath) {
     if (argc == 1) {
         showHelp(argv);
         return "Error: No arguments provided.";
@@ -76,7 +77,7 @@ inline std::string parseArguments(int argc, char* argv[], YoloV8Config& config, 
             std::string flag = argument.substr(2);
             std::string nextArgument;
 
-            if (flag == "model") {
+            if (flag == "yolo-model-filepath") {
                 if (!tryGetNextArgument(argc, argv, i, nextArgument, flag))
                     return "Error: Unable to get next argument for flag 'model'.";
 
@@ -84,7 +85,18 @@ inline std::string parseArguments(int argc, char* argv[], YoloV8Config& config, 
                     return "Error: Unable to find model at path '" + nextArgument + "' for flag '" + flag + "'.";
                 }
 
-                onnxModelPath = nextArgument;
+                yolo_ModelPath = nextArgument;
+            }
+
+            else if (flag == "dpt-model-filepath") {
+                if (!tryGetNextArgument(argc, argv, i, nextArgument, flag))
+                    return "Error: Unable to get next argument for flag 'model'.";
+
+                if (!doesFileExist(nextArgument)) {
+                    return "Error: Unable to find model at path '" + nextArgument + "' for flag '" + flag + "'.";
+                }
+
+                dpt_ModelPath = nextArgument;
             }
 
             else if (flag == "prob-threshold") {
@@ -207,6 +219,19 @@ inline std::string parseArguments(int argc, char* argv[], YoloV8Config& config, 
                 config.classNames = values;
             }
 
+            else if (flag == "class-names") {
+                std::vector<std::string> values;
+                while (tryGetNextArgument(argc, argv, i, nextArgument, flag, false)) {
+                    values.push_back(nextArgument);
+                }
+
+                if (values.size() == 0) {
+                    return "Error: No arguments provided for flag 'class-names'.";
+                }
+
+                config.classNames = values;
+            }
+
             else if (flag == "ros-args") {
                 // ROS2 args will be parsed separately by ROS2
                 continue;
@@ -229,7 +254,7 @@ inline std::string parseArguments(int argc, char* argv[], YoloV8Config& config, 
         }
     }
 
-    if (onnxModelPath.empty()) {
+    if (yolo_ModelPath.empty() && dpt_ModelPath.empty()) {
         return "Error: No arguments provided for flag 'model'.";
     }
 

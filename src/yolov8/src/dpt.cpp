@@ -78,10 +78,26 @@ DepthAnything::~DepthAnything()
 */
 std::vector<float> DepthAnything::preprocess(cv::Mat& image)
 {
-    // See if Cropping is necessary
-
-    std::tuple<cv::Mat, int, int> resized = resize_depth(image, input_w, input_h);
-    cv::Mat resized_image = std::get<0>(resized);
+    // See Cropping and Resizing
+    int orig_width = image.cols;
+    int orig_height = image.rows;
+    double target_aspect = static_cast<double>(input_w) / input_h;
+    double orig_aspect = static_cast<double>(orig_width) / orig_height;
+    if (orig_aspect < target_aspect) {// image too narrow compared to target, use full width and crop the height.
+        int crop_width = orig_width;
+        int crop_height = static_cast<int>(orig_width / target_aspect);
+        int y_offset = (orig_height - crop_height) / 2;
+        image = image(cv::Rect(0, y_offset, crop_width, crop_height));
+    } else { // image too wide, use full height and crop the width.
+        int crop_height = orig_height;
+        int crop_width = static_cast<int>(orig_height * target_aspect);
+        int x_offset = (orig_width - crop_width) / 2;
+        image = image(cv::Rect(x_offset, 0, crop_width, crop_height));
+    }
+    // std::tuple<cv::Mat, int, int> resized = resize_depth(image, input_w, input_h);
+    cv::Mat resized_image;
+    cv::resize(image, resized_image, cv::Size(input_w, input_h));
+    // Preprocessing
     std::vector<float> input_tensor;
     for (int k = 0; k < 3; k++)
     {
@@ -101,8 +117,9 @@ cv::Mat DepthAnything::predict(cv::Mat& image)
     cv::Mat clone_image;
     image.copyTo(clone_image);
 
-    int img_w = image.cols;
-    int img_h = image.rows;
+    // Original Image Dimensions
+    int orig_w = image.cols; 
+    int orig_h = image.rows;
 
     // Preprocessing
     std::vector<float> input = preprocess(clone_image);
@@ -114,6 +131,8 @@ cv::Mat DepthAnything::predict(cv::Mat& image)
 #else
     context->executeV2(buffer);
 #endif
+    int totalElements = input_h * input_w;
+    launchPostprocessKernel((float*) buffer[1], totalElements, stream);
 
     cudaStreamSynchronize(stream);
 
@@ -122,27 +141,37 @@ cv::Mat DepthAnything::predict(cv::Mat& image)
 
     // Convert the entire depth_data vector to a CV_32FC1 Mat
     cv::Mat depth_mat(input_h, input_w, CV_32FC1, depth_data);
-    cv::normalize(depth_mat, depth_mat, 0, 255, cv::NORM_MINMAX, CV_8U);
+    // std::cout << "Depth map size: " << depth_mat.size() << std::endl;
+    // cv::normalize(depth_mat, depth_mat, 0, 120, cv::NORM_MINMAX, CV_8U);
 
-    // Create a colormap from the depth data
-    cv::Mat colormap;
-    cv::applyColorMap(depth_mat, colormap, cv::COLORMAP_INFERNO);
+    // **Resize depth map to original image aspect ratio**
+    // std::tuple<cv::Mat, int, int> resized = resize_depth(depth_mat, img_w, img_h);
+    // cv::Mat padded_depth = std::get<0>(resized);
+    int resize_w, resize_h;
+    cv::Mat resized_depth;
+    float aspect_ratio = static_cast<float>(input_w) / input_h;
 
-    // // Rescale the colormap
-    // int limX, limY;
-    // if (img_w > img_h)
-    // {
-    //     limX = input_w;
-    //     limY = input_w * img_h / img_w;
-    // }
-    // else
-    // {
-    //     limX = input_w * img_w / img_h;
-    //     limY = input_w;
-    // }
-    cv::resize(colormap, colormap, cv::Size(img_w, img_h));
+    if (aspect_ratio > 1.0) {
+        resize_w = orig_w;
+        resize_h = static_cast<int>(resize_w / aspect_ratio);
+    } else {
+        resize_h = orig_h;
+        resize_w = static_cast<int>(resize_h * aspect_ratio);
+    }
+    cv::resize(depth_mat, resized_depth, cv::Size(resize_w, resize_h));
+    // std::cout << "Depth RESIZE size: " << resized_depth.size() << std::endl;
 
-    return colormap;
+
+    // **Pad resized depth map to original size (centered)**
+    int pad_top = (orig_h - resize_h) / 2;
+    int pad_bottom = orig_h - resize_h - pad_top;
+    int pad_left = (orig_w - resize_w) / 2;
+    int pad_right = orig_w - resize_w - pad_left;
+
+    cv::Mat padded_depth;
+    cv::copyMakeBorder(resized_depth, padded_depth, pad_top, pad_bottom, pad_left, pad_right, cv::BORDER_CONSTANT, cv::Scalar(0));
+
+    return padded_depth;
 }
 
 // cv::cuda::GpuMat DepthAnything::preprocess(const cv::cuda::GpuMat &input) {
