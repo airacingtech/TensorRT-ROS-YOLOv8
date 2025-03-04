@@ -14,8 +14,8 @@ YoloV8::YoloV8(const std::string& onnxModelPath, const YoloV8Config& config)
         , KPS_THRESHOLD(config.kpsThreshold) {
     // Specify options for GPU inference
     Options options;
-    options.optBatchSize = 4;
-    options.maxBatchSize = 4;
+    options.optBatchSize = 1;
+    options.maxBatchSize = 1;
 
     options.precision = config.precision;
     options.calibrationDataDirectoryPath = config.calibrationDataDirectory;

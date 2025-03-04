@@ -2,3 +2,6 @@
 *.trt
 *.pt
 *.ptl
+*.png
+*.jpg
+*.engine*
