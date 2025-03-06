@@ -76,29 +76,27 @@ DepthAnything::~DepthAnything()
  * @param image Input image
  * @return Processed Tensor
 */
-std::vector<float> DepthAnything::preprocess(cv::Mat& image)
+std::vector<float> DepthAnything::preprocess(cv::Mat image)
 {
     // See Cropping and Resizing
     int orig_width = image.cols;
     int orig_height = image.rows;
     double target_aspect = static_cast<double>(input_w) / input_h;
     double orig_aspect = static_cast<double>(orig_width) / orig_height;
-    if (orig_aspect < target_aspect) {// image too narrow compared to target, use full width and crop the height.
-        int crop_width = orig_width;
-        int crop_height = static_cast<int>(orig_width / target_aspect);
-        int y_offset = (orig_height - crop_height) / 2;
-        image = image(cv::Rect(0, y_offset, crop_width, crop_height));
-    } else { // image too wide, use full height and crop the width.
-        int crop_height = orig_height;
-        int crop_width = static_cast<int>(orig_height * target_aspect);
-        int x_offset = (orig_width - crop_width) / 2;
-        image = image(cv::Rect(x_offset, 0, crop_width, crop_height));
-    }
+
+    // Always Fully utilize the width
+    int crop_width = orig_width;
+    int crop_height = static_cast<int>(orig_width / target_aspect); // This needs to be memorized
+    int y_offset = (orig_height - crop_height) / 2;
+    image = image(cv::Rect(0, y_offset, crop_width, crop_height));
+
     // std::tuple<cv::Mat, int, int> resized = resize_depth(image, input_w, input_h);
     cv::Mat resized_image;
     cv::resize(image, resized_image, cv::Size(input_w, input_h));
-    // Preprocessing
+    // Preprocessing TODO: Perform loop ordering and reserve space
     std::vector<float> input_tensor;
+    // input_tensor.reserve(3 * input_h * input_w);
+
     for (int k = 0; k < 3; k++)
     {
         for (int i = 0; i < resized_image.rows; i++)
@@ -109,20 +107,53 @@ std::vector<float> DepthAnything::preprocess(cv::Mat& image)
             }
         }
     }
+
+    // // Example of better loop ordering:
+    // for (int i = 0; i < resized_image.rows; i++) {
+    //     const cv::Vec3b* row_ptr = resized_image.ptr<cv::Vec3b>(i);
+    //     for (int j = 0; j < resized_image.cols; j++) {
+    //         for (int k = 0; k < 3; k++) {
+    //             input_tensor.emplace_back((static_cast<float>(row_ptr[j][k]) - mean[k]) / std[k]);
+    //         }
+    //     }
+    // }
     return input_tensor;
 }
 
-cv::Mat DepthAnything::predict(cv::Mat& image)
+cv::Mat DepthAnything::reversePreprocess(const cv::Mat& processed_image, int orig_width, int orig_height)
 {
-    cv::Mat clone_image;
-    image.copyTo(clone_image);
+    // The target aspect remains the same as in preprocessing.
+    double target_aspect = static_cast<double>(input_w) / input_h;
+    
+    // The crop in the forward pass used the full width and a computed crop_height.
+    int crop_width = orig_width;
+    int crop_height = static_cast<int>(orig_width / target_aspect);
+    
+    // Compute the vertical offset (the same used for cropping in preprocessing)
+    int y_offset = (orig_height - crop_height) / 2;
+    
+    // Resize the processed image back to the original cropped dimensions.
+    cv::Mat upscaled;
+    cv::resize(processed_image, upscaled, cv::Size(crop_width, crop_height));
+    
+    // Create an output image filled with black (all zeros)
+    cv::Mat output = cv::Mat::zeros(orig_height, orig_width, processed_image.type());
+    
+    // Place the upscaled image into the correct location
+    upscaled.copyTo(output(cv::Rect(0, y_offset, crop_width, crop_height)));
+    
+    return output;
+}
 
+// cv::Mat DepthAnything::predict(cv::Mat& image, cv::Mat& depth_output, bool infer_mode=true)
+cv::Mat DepthAnything::predict(cv::Mat& image, bool infer_mode=true)
+{
     // Original Image Dimensions
     int orig_w = image.cols; 
     int orig_h = image.rows;
 
     // Preprocessing
-    std::vector<float> input = preprocess(clone_image);
+    std::vector<float> input = infer_mode ? preprocess(std::move(image)) : preprocess(image); // preprocess by default makes a copy
     cudaMemcpyAsync(buffer[0], input.data(), 3 * input_h * input_w * sizeof(float), cudaMemcpyHostToDevice, stream);
 
     // Inference using depth estimation model
@@ -147,31 +178,31 @@ cv::Mat DepthAnything::predict(cv::Mat& image)
     // **Resize depth map to original image aspect ratio**
     // std::tuple<cv::Mat, int, int> resized = resize_depth(depth_mat, img_w, img_h);
     // cv::Mat padded_depth = std::get<0>(resized);
-    int resize_w, resize_h;
-    cv::Mat resized_depth;
-    float aspect_ratio = static_cast<float>(input_w) / input_h;
+    depth_mat = reversePreprocess(depth_mat, orig_w, orig_h);
 
-    if (aspect_ratio > 1.0) {
-        resize_w = orig_w;
-        resize_h = static_cast<int>(resize_w / aspect_ratio);
-    } else {
-        resize_h = orig_h;
-        resize_w = static_cast<int>(resize_h * aspect_ratio);
-    }
-    cv::resize(depth_mat, resized_depth, cv::Size(resize_w, resize_h));
-    // std::cout << "Depth RESIZE size: " << resized_depth.size() << std::endl;
+    // int resize_w, resize_h;
+    // cv::Mat resized_depth;
+    // float aspect_ratio = static_cast<float>(input_w) / input_h;
 
+    // if (aspect_ratio > 1.0) { // image too wide
+    //     resize_w = orig_w;
+    //     resize_h = static_cast<int>(resize_w / aspect_ratio);
+    // } else {
+    //     resize_h = orig_h;
+    //     resize_w = static_cast<int>(resize_h * aspect_ratio);
+    // }
+    // cv::resize(depth_mat, resized_depth, cv::Size(resize_w, resize_h));
+    // // std::cout << "Depth RESIZE size: " << resized_depth.size() << std::endl;
+    // // **Pad resized depth map to original size (centered)**
+    // int pad_top = (orig_h - resize_h) / 2;
+    // int pad_bottom = orig_h - resize_h - pad_top;
+    // int pad_left = (orig_w - resize_w) / 2;
+    // int pad_right = orig_w - resize_w - pad_left;
 
-    // **Pad resized depth map to original size (centered)**
-    int pad_top = (orig_h - resize_h) / 2;
-    int pad_bottom = orig_h - resize_h - pad_top;
-    int pad_left = (orig_w - resize_w) / 2;
-    int pad_right = orig_w - resize_w - pad_left;
+    // cv::Mat padded_depth;
+    // cv::copyMakeBorder(resized_depth, padded_depth, pad_top, pad_bottom, pad_left, pad_right, cv::BORDER_CONSTANT, cv::Scalar(0));
 
-    cv::Mat padded_depth;
-    cv::copyMakeBorder(resized_depth, padded_depth, pad_top, pad_bottom, pad_left, pad_right, cv::BORDER_CONSTANT, cv::Scalar(0));
-
-    return padded_depth;
+    return depth_mat;
 }
 
 // cv::cuda::GpuMat DepthAnything::preprocess(const cv::cuda::GpuMat &input) {

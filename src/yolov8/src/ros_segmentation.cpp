@@ -183,7 +183,7 @@ class YoloV8Node : public rclcpp::Node
 
             // For REAR Perception, this only:
             RCLCPP_INFO(this->get_logger(), "Running DPT inference");
-            cv::Mat depth_output = dpt_.predict(images[0]);
+            cv::Mat depth_output = dpt_.predict(images[0], (!visualize_masks_ && !enable_one_channel_mask_ && !visualize_one_channel_mask_)); // Zero copy mode if images not needed downstream
             RCLCPP_INFO(this->get_logger(), "Inference DPT complete");
 
             if (objects.size() == 0) {
@@ -243,61 +243,6 @@ class YoloV8Node : public rclcpp::Node
             return std::make_pair(processing_topics, missing_topics);
         }
 
-        /*
-        * Preprocess input(s) for Neural Network by converting ROS image(s) to OpenCV image(s)
-        * and converting from RGB8 to BGR8
-        *
-        * @param images: the map to store the preprocessed images
-        */
-        // void preprocess_callback(std::map<std::string, cv::Mat>& images) {
-        //     for (const auto& pair : processing_buffer_) {
-        //         std::string camera_topic = pair.first;
-        //         const sensor_msgs::msg::Image::SharedPtr image_msg = pair.second;
-        //         try
-        //             {
-        //                 // Share the memory with the original image
-        //                 // TODO: Should this be a copy to deal with a cleared buffer?
-        //                 cv_bridge::CvImageConstPtr cv_ptr;
-        //                 cv_ptr = cv_bridge::toCvShare(image_msg, sensor_msgs::image_encodings::RGB8);
-
-        //                 // Convert from RGB8 to BGR8
-        //                 cv::Mat img = cv_ptr->image;
-        //                 cv::cvtColor(img, img, cv::COLOR_RGB2BGR);
-
-        //                 images[camera_topic] = img;
-        //             } catch (cv_bridge::Exception& e) {
-        //                 RCLCPP_ERROR(this->get_logger(), "Failed to convert ROS image message on topic %s \
-        //                     due to cv_bridge error: %s", camera_topic.c_str(), e.what());
-        //                 continue;
-        //             }
-        //     }
-        // }
-
-        // void preprocess_callback(std::map<std::string, cv::Mat>& images) {
-        //     for (const auto& pair : processing_buffer_) {
-        //         std::string camera_topic = pair.first;
-        //         const sensor_msgs::msg::Image::SharedPtr image_msg = pair.second;
-        //         try {
-        //             // Convert the ROS image message to a cv::Mat (using shared memory)
-        //             cv_bridge::CvImageConstPtr cv_ptr = cv_bridge::toCvShare(image_msg, sensor_msgs::image_encodings::RGB8);
-        //             cv::Mat img = cv_ptr->image;
-                    
-        //             // Convert from RGB8 to BGR8 as required
-        //             cv::cvtColor(img, img, cv::COLOR_RGB2BGR);
-                    
-        //             // Resize the image to the target dimensions
-        //             cv::resize(img, img, cv::Size(target_width_, target_height_));
-                    
-        //             // Store the preprocessed (resized) image in the images map
-        //             images[camera_topic] = img;
-        //         } catch (cv_bridge::Exception& e) {
-        //             RCLCPP_ERROR(this->get_logger(), "Failed to convert ROS image message on topic %s due to cv_bridge error: %s",
-        //                          camera_topic.c_str(), e.what());
-        //             continue;
-        //         }
-        //     }
-        // }
-
         void preprocess_callback(std::map<std::string, cv::Mat>& images) {
             for (const auto& pair : processing_buffer_) {
                 std::string camera_topic = pair.first;
@@ -320,64 +265,6 @@ class YoloV8Node : public rclcpp::Node
                     }
             }
         }
-
-        // void preprocess_callback(std::map<std::string, cv::Mat>& images) {
-            
-
-        //     double target_aspect = static_cast<double>(target_width_) / target_height_;
-        //     RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "Target aspect: %f", target_aspect);
-        //     RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "Target width: %d", target_width_);
-        //     RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "Target height: %d", target_height_);
-        //     for (const auto& pair : processing_buffer_) {
-        //         std::string camera_topic = pair.first;
-        //         const sensor_msgs::msg::Image::SharedPtr image_msg = pair.second;
-        //         try
-        //             {
-        //                 // Share the memory with the original image
-        //                 // TODO: Should this be a copy to deal with a cleared buffer?
-        //                 cv_bridge::CvImagePtr cv_ptr = cv_bridge::toCvCopy(image_msg, sensor_msgs::image_encodings::RGB8);
-        //                 cv::Mat img = cv_ptr->image;
-        //                 cv::cvtColor(img, img, cv::COLOR_RGB2BGR);
-                        
-        //                 // Determine cropping rectangle based on the target aspect ratio.
-        //                 int orig_width = img.cols;
-        //                 int orig_height = img.rows;
-        //                 double orig_aspect = static_cast<double>(orig_width) / orig_height;
-
-        //                 RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "Orig aspect: %f", orig_aspect);
-
-        //                 cv::Rect crop_rect;
-        //                 if (orig_aspect < target_aspect) {
-        //                     // If the image is too narrow compared to target, use full width and crop the height.
-        //                     int crop_width = orig_width;
-        //                     int crop_height = static_cast<int>(orig_width / target_aspect);
-        //                     int y_offset = (orig_height - crop_height) / 2;
-        //                     crop_rect = cv::Rect(0, y_offset, crop_width, crop_height);
-        //                 } else {
-        //                     // If the image is too wide, use full height and crop the width.
-        //                     int crop_height = orig_height;
-        //                     int crop_width = static_cast<int>(orig_height * target_aspect);
-        //                     int x_offset = (orig_width - crop_width) / 2;
-        //                     crop_rect = cv::Rect(x_offset, 0, crop_width, crop_height);
-        //                 }
-                        
-        //                 // Crop the image to the calculated rectangle.
-        //                 cv::Mat cropped = img(crop_rect);
-        //                 // Resize the cropped region to the target dimensions.
-        //                 cv::resize(cropped, img, cv::Size(target_width_, target_height_));    
-                        
-        //                 RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "Cropped aspect: %f", static_cast<double>(img.cols) / img.rows);
-        //                 RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "Cropped width: %d", img.cols);
-        //                 RCLCPP_INFO(rclcpp::get_logger("rclcpp"), "Cropped height: %d", img.rows);
-
-        //                 images[camera_topic] = img;
-        //             } catch (cv_bridge::Exception& e) {
-        //                 RCLCPP_ERROR(this->get_logger(), "Failed to convert ROS image message on topic %s \
-        //                     due to cv_bridge error: %s", camera_topic.c_str(), e.what());
-        //                 continue;
-        //             }
-        //     }
-        // }
 
         /*
         * Convert output(s) from Neural Network to ROS messages and publish them
