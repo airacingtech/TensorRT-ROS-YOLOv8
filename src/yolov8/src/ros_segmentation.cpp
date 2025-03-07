@@ -5,6 +5,7 @@
 #include "cmd_line_util.h"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/image.hpp"
+#include "sensor_msgs/msg/point_cloud2.hpp"
 #include "cv_bridge/cv_bridge.hpp"
 
 // Custom ROS2 message types where the names of the hpp files are snake_case
@@ -14,6 +15,12 @@
 #include "yolov8_interfaces/msg/yolov8_b_box.hpp"
 
 using std::placeholders::_1;
+
+#define FX 256.6171  // # Focal length in x
+#define FY 256.6171  // # Focal length in y
+#define CX 254.2069  // # Principal point x
+#define CY 195.0000  // 202.1108  # Principal point y 384 height
+#define FRAME_ID "camera_rear"
 
 class YoloV8Node : public rclcpp::Node
 {
@@ -111,6 +118,12 @@ class YoloV8Node : public rclcpp::Node
                 one_channel_depth_publishers_[topic] = this->create_publisher<sensor_msgs::msg::Image>(
                     "/yolov8" + topic + "/seg_depth_one_channel", qos_profile
                 );
+                full_point_cloud_publisher_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(
+                    "/dpt/full_point_cloud", qos_profile
+                );
+                filtered_point_cloud_publisher_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(
+                    "/dpt/filtered_point_cloud", qos_profile
+                );
             }
         }
 
@@ -185,6 +198,9 @@ class YoloV8Node : public rclcpp::Node
             RCLCPP_INFO(this->get_logger(), "Running DPT inference");
             cv::Mat depth_output = dpt_.predict(images[0], (!visualize_masks_ && !enable_one_channel_mask_ && !visualize_one_channel_mask_)); // Zero copy mode if images not needed downstream
             RCLCPP_INFO(this->get_logger(), "Inference DPT complete");
+            publishFullPointCloud(depth_output);
+            RCLCPP_INFO(this->get_logger(), "Depth Output Published");
+
 
             if (objects.size() == 0) {
                std::cout << "No objects detected at time " << this->now().seconds() << std::endl;
@@ -318,6 +334,153 @@ class YoloV8Node : public rclcpp::Node
             }
         }
 
+        // Function to publish an individual object point cloud.
+        // Only pixels that are nonzero in the object_mask (CV_8UC1)
+        // and have valid depth (depth > 0) are back-projected.
+        void publishObjectPointCloud(const cv::Mat &depth_map, const cv::Mat &object_mask)
+        {
+            if (depth_map.empty() || object_mask.empty()) {
+                RCLCPP_WARN(rclcpp::get_logger("ObjectPointCloudPublisher"), "Empty depth map or object mask provided");
+                return;
+            }
+            if (depth_map.type() != CV_32FC1) {
+                RCLCPP_ERROR(rclcpp::get_logger("ObjectPointCloudPublisher"), "Depth map must be of type CV_32FC1: Depth map type: %d", depth_map.type());
+                return;
+            }
+            if (object_mask.type() != CV_8UC1) {
+                RCLCPP_ERROR(rclcpp::get_logger("ObjectPointCloudPublisher"), "Object mask must be of type CV_8UC1");
+                return;
+            }
+            if (depth_map.size() != object_mask.size()) {
+                RCLCPP_ERROR(rclcpp::get_logger("ObjectPointCloudPublisher"), "Depth map and object mask must have the same dimensions");
+                return;
+            }
+
+            int width = depth_map.cols;
+            int height = depth_map.rows;
+            std::vector<float> points;
+
+            // Loop through each pixel. Only process pixels where the mask indicates the object.
+            for (int v = 0; v < height; ++v) {
+                for (int u = 0; u < width; ++u) {
+                    // Check if the current pixel belongs to the object.
+                    if (object_mask.at<uchar>(v, u) == 0)
+                        continue;
+
+                    float d = depth_map.at<float>(v, u);
+                    if (d <= 0.0f) continue;  // Skip pixels with no depth
+                    float z = -((v - CY) / FY) * d;
+                    float y = -((u - CX) / FX) * d;
+                    float x = d;
+                    points.push_back(x);
+                    points.push_back(y);
+                    points.push_back(z);
+                }
+            }
+
+            // Build the PointCloud2 message.
+            sensor_msgs::msg::PointCloud2 cloud_msg;
+            cloud_msg.header.stamp = rclcpp::Clock().now();
+            cloud_msg.header.frame_id = FRAME_ID;
+            cloud_msg.height = 1;
+            cloud_msg.width = static_cast<uint32_t>(points.size() / 3);
+            cloud_msg.is_dense = false;
+            cloud_msg.is_bigendian = false;
+            cloud_msg.point_step = 3 * sizeof(float);
+            cloud_msg.row_step = cloud_msg.point_step * cloud_msg.width;
+
+            sensor_msgs::msg::PointField field;
+            field.datatype = sensor_msgs::msg::PointField::FLOAT32;
+            field.count = 1;
+            
+            field.name = "x";
+            field.offset = 0;
+            cloud_msg.fields.push_back(field);
+            
+            field.name = "y";
+            field.offset = 4;
+            cloud_msg.fields.push_back(field);
+            
+            field.name = "z";
+            field.offset = 8;
+            cloud_msg.fields.push_back(field);
+
+            size_t data_size = points.size() * sizeof(float);
+            cloud_msg.data.resize(data_size);
+            memcpy(cloud_msg.data.data(), points.data(), data_size);
+
+            filtered_point_cloud_publisher_->publish(cloud_msg);
+        }
+
+        // Function to publish the full depth map as a point cloud.
+        // Skips pixels where the depth value is 0.
+        void publishFullPointCloud(const cv::Mat &depth_map){
+            if (depth_map.empty()) {
+                RCLCPP_WARN(rclcpp::get_logger("DepthPointCloudPublisher"), "Empty depth map provided");
+                return;
+            }
+            if (depth_map.type() != CV_32FC1) {
+                RCLCPP_ERROR(rclcpp::get_logger("ObjectPointCloudPublisher"), "Depth map must be of type CV_32FC1: Depth map type: %d", depth_map.type());
+                return;
+            }
+        
+            int width = depth_map.cols;
+            int height = depth_map.rows;
+            std::vector<float> points;  // Each point has x, y, z
+        
+            // Loop through each pixel and back-project if depth > 0.
+            for (int v = 0; v < height; ++v) {
+                for (int u = 0; u < width; ++u) {
+                    float d = depth_map.at<float>(v, u);
+                    if (d <= 0.0f) continue;  // Skip pixels with no depth
+        
+                    // Back-project pixel (u, v) into 3D space.
+                    float z = -((v - CY) / FY) * d;
+                    float y = -((u - CX) / FX) * d;
+                    float x = d;
+                    points.push_back(x);
+                    points.push_back(y);
+                    points.push_back(z);
+                }
+            }
+        
+            // Build the PointCloud2 message.
+            sensor_msgs::msg::PointCloud2 cloud_msg;
+            cloud_msg.header.stamp = rclcpp::Clock().now();
+            cloud_msg.header.frame_id = FRAME_ID;
+            cloud_msg.height = 1;
+            cloud_msg.width = static_cast<uint32_t>(points.size() / 3);
+            cloud_msg.is_dense = false;
+            cloud_msg.is_bigendian = false;
+            cloud_msg.point_step = 3 * sizeof(float);
+            cloud_msg.row_step = cloud_msg.point_step * cloud_msg.width;
+        
+            // Define fields for x, y, and z.
+            sensor_msgs::msg::PointField field;
+            field.datatype = sensor_msgs::msg::PointField::FLOAT32;
+            field.count = 1;
+            
+            field.name = "x";
+            field.offset = 0;
+            cloud_msg.fields.push_back(field);
+            
+            field.name = "y";
+            field.offset = 4;
+            cloud_msg.fields.push_back(field);
+            
+            field.name = "z";
+            field.offset = 8;
+            cloud_msg.fields.push_back(field);
+        
+            // Copy the point data into the message.
+            size_t data_size = points.size() * sizeof(float);
+            cloud_msg.data.resize(data_size);
+            memcpy(cloud_msg.data.data(), points.data(), data_size);
+        
+            // Publish the point cloud.
+            full_point_cloud_publisher_->publish(cloud_msg);
+        }
+
         /*
         * Visualize the segmentation masks and bounding boxes on the image and publish it
         * to the given topic.
@@ -362,7 +525,7 @@ class YoloV8Node : public rclcpp::Node
             cv::Mat oneChannelMask;
             int img_width = image_msg->width;
             int img_height = image_msg->height;
-            yoloV8_.getOneChannelSegmentationMask(objects, oneChannelMask, img_height, img_width);
+            yoloV8_.getOneChannelSegmentationMask(objects, oneChannelMask, img_height, img_width, 0.9);
             // Use ROS cv_bridge to convert cv::Mat to sensor_msgs::msg::Image and take header from original camera image
             try {
                 cv_bridge::CvImage cvBridgeOneChannelMask = cv_bridge::CvImage(
@@ -376,8 +539,13 @@ class YoloV8Node : public rclcpp::Node
 
             // Publish the one channel mask with RGB color for visualization only
             if (visualize_one_channel_mask) {
+                // Publish the overlayed pointcloud
+                publishObjectPointCloud(depthimage, oneChannelMask);
+                
                 cv::Mat oneChannelMaskRGB8 = visualizeOneChannelMask(oneChannelMask);
                 cv::Mat oneChannelDepthRGB8 = visualizeDepth(depthimage);
+
+                // Publish the one channel mask with RGB color for visualization only
                 try {
                     cv_bridge::CvImage cvBridgeOneChannelMaskRGB8 = cv_bridge::CvImage(
                         image_msg->header, "rgb8", oneChannelMaskRGB8
@@ -388,6 +556,8 @@ class YoloV8Node : public rclcpp::Node
                     RCLCPP_ERROR(this->get_logger(), "cv_bridge exception: %s", e.what());
                     return;
                 }
+
+                // Publish the depth with RGB color for visualization only
                 try {
                     cv_bridge::CvImage cvBridgeOneChannelDepthRGB8 = cv_bridge::CvImage(
                         image_msg->header, "rgb8", oneChannelDepthRGB8
@@ -491,6 +661,8 @@ class YoloV8Node : public rclcpp::Node
         std::map<std::string, rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr> image_publishers_;
         std::map<std::string, rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr> one_channel_mask_publishers_;
         std::map<std::string, rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr> one_channel_depth_publishers_;
+        rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr full_point_cloud_publisher_;
+        rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr filtered_point_cloud_publisher_;
 
         rclcpp::TimerBase::SharedPtr buffer_timer_;
         std::map<std::string, sensor_msgs::msg::Image::SharedPtr> current_buffer_;
@@ -514,7 +686,7 @@ int main(int argc, char *argv[]) {
     YoloV8Config config;
     std::string yolo_ModelPath = "/home/chris/testing/race_common/src/perception/TensorRT-ROS-YOLOv8/src/yolov8/models/best.onnx";
     std::string dpt_ModelPath = "/home/chris/testing/race_common/src/perception/TensorRT-ROS-YOLOv8/src/yolov8/models/engines/DepthAnythingv1_11-Dec_12-04-50740ac911a2_latest_opset19.engine";
-
+    // config.precision = Precision::FP32;
     // Parse arguments
     std::string parseArgsError = parseArguments(argc, argv, config, yolo_ModelPath, dpt_ModelPath);
     if (!parseArgsError.empty()) {

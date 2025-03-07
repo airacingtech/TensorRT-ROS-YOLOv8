@@ -689,27 +689,83 @@ void YoloV8::drawObjectLabels(cv::Mat& image, const std::vector<Object> &objects
     }
 }
 
+// /**
+//  * @brief Place all the segmentation masks into a one channel image.
+//  * 
+//  * This function takes a vector of detected masks and places them into a single channel image.
+//  * 
+//  * @param objects A vector of detected instance segmentation objects.
+//  * @param segMaskOneChannel The output image containing all the masks in a single channel.
+//  * @param img_height The height of the original image.
+//  * @param img_width The width of the original image.
+//  */
+// void YoloV8::getOneChannelSegmentationMask(const std::vector<Object>& objects, cv::Mat& segMaskOneChannel, int img_height, int img_width) {
+//     segMaskOneChannel = cv::Mat::zeros(img_height, img_width, CV_8UC1);
+//     if (!objects.empty() && !objects[0].boxMask.empty()) {
+//         int i = 1;
+//         for (const auto& object: objects) {
+//             // Draw each segmentation mask on the oneChannelMask
+//             segMaskOneChannel(object.rect).setTo(i, object.boxMask);
+//             i++;
+//         }
+//     }
+// }
+
 /**
  * @brief Place all the segmentation masks into a one channel image.
  * 
- * This function takes a vector of detected masks and places them into a single channel image.
+ * This function takes a vector of detected instance segmentation objects,
+ * scales each object's mask by a given factor, and places them into a single channel image.
  * 
  * @param objects A vector of detected instance segmentation objects.
  * @param segMaskOneChannel The output image containing all the masks in a single channel.
  * @param img_height The height of the original image.
  * @param img_width The width of the original image.
+ * @param scale_factor A multiplier for the size of each object's mask (e.g., 0.5 makes it 50% of the original size).
  */
-void YoloV8::getOneChannelSegmentationMask(const std::vector<Object>& objects, cv::Mat& segMaskOneChannel, int img_height, int img_width) {
+void YoloV8::getOneChannelSegmentationMask(const std::vector<Object>& objects,
+                                             cv::Mat& segMaskOneChannel,
+                                             int img_height,
+                                             int img_width,
+                                             float scale_factor = 0.8f)
+{
     segMaskOneChannel = cv::Mat::zeros(img_height, img_width, CV_8UC1);
     if (!objects.empty() && !objects[0].boxMask.empty()) {
-        int i = 1;
+        int idx = 1;
         for (const auto& object: objects) {
-            // Draw each segmentation mask on the oneChannelMask
-            segMaskOneChannel(object.rect).setTo(i, object.boxMask);
-            i++;
+            // Scale the object's mask if a scale factor is provided (other than 1.0)
+            cv::Mat scaledMask;
+            if (scale_factor != 1.0f) {
+                cv::resize(object.boxMask, scaledMask, cv::Size(), scale_factor, scale_factor, cv::INTER_NEAREST);
+            } else {
+                scaledMask = object.boxMask;
+            }
+
+            // Calculate where to place the scaled mask in the full image.
+            // Here, we center the scaled mask within the object's bounding rectangle.
+            int rect_x = object.rect.x;
+            int rect_y = object.rect.y;
+            int rect_width = object.rect.width;
+            int rect_height = object.rect.height;
+            int x_offset = rect_x + (rect_width - scaledMask.cols) / 2;
+            int y_offset = rect_y + (rect_height - scaledMask.rows) / 2;
+            
+            // Create a region of interest (ROI) on the one-channel mask.
+            cv::Rect roi(x_offset, y_offset, scaledMask.cols, scaledMask.rows);
+            // Ensure the ROI is within image bounds.
+            cv::Rect imgRect(0, 0, segMaskOneChannel.cols, segMaskOneChannel.rows);
+            cv::Rect validROI = roi & imgRect;
+            if(validROI.area() > 0) {
+                // Compute the corresponding region in the scaled mask.
+                cv::Rect maskROI(validROI.x - roi.x, validROI.y - roi.y, validROI.width, validROI.height);
+                // Set the region of the composite mask with a label value (here, idx)
+                segMaskOneChannel(validROI).setTo(idx, scaledMask(maskROI));
+            }
+            idx++;
         }
     }
 }
+
 
 /**
  * @brief Function overload to draw object labels on the given image.

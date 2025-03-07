@@ -73,7 +73,7 @@ public:
     std::vector<std::vector<Object>> detectObjects(std::vector<cv::cuda::GpuMat> &imgMat);  // Batched version
 
     // Create a one channel segmentation mask for all segmentation objects
-    void getOneChannelSegmentationMask(const std::vector<Object>& objects, cv::Mat& segMaskOneChannel, int img_height, int img_width);
+    void getOneChannelSegmentationMask(const std::vector<Object>& objects, cv::Mat& segMaskOneChannel, int img_height, int img_width, float scale_factor);
 
     // Draw the object bounding boxes and labels on the image
     void drawObjectLabels(cv::Mat& image, const std::vector<Object> &objects, unsigned int scale = 2);

@@ -27,9 +27,6 @@ public:
     void init(std::string model_path, nvinfer1::ILogger& logger);
 	// cv::Mat predict(cv::Mat& image, cv::Mat& depth_output, bool infer_mode=true);
 	cv::Mat predict(cv::Mat& image, bool infer_mode);
-	cv::Mat infer(cv::Mat& image);
-	std::vector<cv::Mat> detectObjects(std::vector<cv::Mat> &imgMat); // Batched version
-	std::vector<cv::Mat> detectObjects(std::vector<cv::cuda::GpuMat> &imgMat);  // Batched version
 	~DepthAnything();
 	
 private:
