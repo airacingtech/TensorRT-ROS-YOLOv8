@@ -94,6 +94,13 @@ install(FILES
   DESTINATION share/${PROJECT_NAME}
 )
 
+# Install Python node
+install(
+  PROGRAMS
+    src/ros_collect_with_radar.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 # Allows other packages to find and link to the YoloV8_TRT and tensorrt_cpp_api libraries
 ament_export_include_directories(include)
 ament_export_libraries(YOLOV8_TRT tensorrt_cpp_api yolov8_interfaces)

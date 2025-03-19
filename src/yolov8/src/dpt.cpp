@@ -76,7 +76,7 @@ DepthAnything::~DepthAnything()
  * @param image Input image
  * @return Processed Tensor
 */
-std::vector<float> DepthAnything::preprocess(cv::Mat image)
+std::vector<float> DepthAnything::preprocess(cv::Mat image, int upward_shift=0)
 {
     // See Cropping and Resizing
     int orig_width = image.cols;
@@ -87,7 +87,8 @@ std::vector<float> DepthAnything::preprocess(cv::Mat image)
     // Always Fully utilize the width
     int crop_width = orig_width;
     int crop_height = static_cast<int>(orig_width / target_aspect); // This needs to be memorized
-    int y_offset = (orig_height - crop_height) / 2;
+    upward_shift = (upward_shift + target_aspect - 1) / target_aspect; // ceil
+    int y_offset = ((orig_height - crop_height) / 2) - upward_shift;
     image = image(cv::Rect(0, y_offset, crop_width, crop_height));
 
     // std::tuple<cv::Mat, int, int> resized = resize_depth(image, input_w, input_h);
@@ -120,7 +121,7 @@ std::vector<float> DepthAnything::preprocess(cv::Mat image)
     return input_tensor;
 }
 
-cv::Mat DepthAnything::reversePreprocess(const cv::Mat& processed_image, int orig_width, int orig_height)
+cv::Mat DepthAnything::reversePreprocess(const cv::Mat& processed_image, int orig_width, int orig_height, int upward_shift=0)
 {
     // The target aspect remains the same as in preprocessing.
     double target_aspect = static_cast<double>(input_w) / input_h;
@@ -130,7 +131,8 @@ cv::Mat DepthAnything::reversePreprocess(const cv::Mat& processed_image, int ori
     int crop_height = static_cast<int>(orig_width / target_aspect);
     
     // Compute the vertical offset (the same used for cropping in preprocessing)
-    int y_offset = (orig_height - crop_height) / 2;
+    upward_shift = (upward_shift + target_aspect - 1) / target_aspect; // ceil
+    int y_offset = ((orig_height - crop_height) / 2) - upward_shift;
     
     // Resize the processed image back to the original cropped dimensions.
     cv::Mat upscaled;
@@ -146,14 +148,14 @@ cv::Mat DepthAnything::reversePreprocess(const cv::Mat& processed_image, int ori
 }
 
 // cv::Mat DepthAnything::predict(cv::Mat& image, cv::Mat& depth_output, bool infer_mode=true)
-cv::Mat DepthAnything::predict(cv::Mat& image, bool infer_mode=true)
+cv::Mat DepthAnything::predict(cv::Mat& image, bool infer_mode=true, int upward_shift=0)
 {
     // Original Image Dimensions
     int orig_w = image.cols; 
     int orig_h = image.rows;
 
     // Preprocessing
-    std::vector<float> input = infer_mode ? preprocess(std::move(image)) : preprocess(image); // preprocess by default makes a copy
+    std::vector<float> input = infer_mode ? preprocess(std::move(image), upward_shift) : preprocess(image, upward_shift); // preprocess by default makes a copy
     cudaMemcpyAsync(buffer[0], input.data(), 3 * input_h * input_w * sizeof(float), cudaMemcpyHostToDevice, stream);
 
     // Inference using depth estimation model
@@ -172,7 +174,7 @@ cv::Mat DepthAnything::predict(cv::Mat& image, bool infer_mode=true)
 
     // Convert the entire depth_data vector to a CV_32FC1 Mat
     cv::Mat depth_mat(input_h, input_w, CV_32FC1, depth_data);
-    depth_mat = reversePreprocess(depth_mat, orig_w, orig_h);
+    depth_mat = reversePreprocess(depth_mat, orig_w, orig_h, upward_shift);
     return depth_mat;
 }
 

@@ -26,7 +26,7 @@ public:
 	DepthAnything();
     void init(std::string model_path, nvinfer1::ILogger& logger);
 	// cv::Mat predict(cv::Mat& image, cv::Mat& depth_output, bool infer_mode=true);
-	cv::Mat predict(cv::Mat& image, bool infer_mode);
+	cv::Mat predict(cv::Mat& image, bool infer_mode, int upward_shift);
 	~DepthAnything();
 	
 private:
@@ -46,8 +46,8 @@ private:
 	float* depth_data;
 	cudaStream_t stream;
 
-	std::vector<float> preprocess(cv::Mat image);
-	cv::Mat reversePreprocess(const cv::Mat& processed_image, int orig_width, int orig_height);
+	std::vector<float> preprocess(cv::Mat image, int upward_shift);
+	cv::Mat reversePreprocess(const cv::Mat& processed_image, int orig_width, int orig_height, int upward_shift);
 	std::vector<DepthEstimation> postprocess(std::vector<int> mask, int img_w, int img_h);
 	void build(std::string onnxPath, nvinfer1::ILogger& logger);
 	bool saveEngine(const std::string& filename);

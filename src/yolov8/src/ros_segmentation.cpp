@@ -21,6 +21,7 @@ using std::placeholders::_1;
 #define CX 254.2069  // # Principal point x
 #define CY 195.0000  // 202.1108  # Principal point y 384 height
 #define FRAME_ID "camera_rear"
+#define DPT_UPWARD_SHIFT 0 // TODO: Make this a ROS parameter
 
 class YoloV8Node : public rclcpp::Node
 {
@@ -196,7 +197,7 @@ class YoloV8Node : public rclcpp::Node
 
             // For REAR Perception, this only:
             RCLCPP_INFO(this->get_logger(), "Running DPT inference");
-            cv::Mat depth_output = dpt_.predict(images[0], (!visualize_masks_ && !enable_one_channel_mask_ && !visualize_one_channel_mask_)); // Zero copy mode if images not needed downstream
+            cv::Mat depth_output = dpt_.predict(images[0], (!visualize_masks_ && !enable_one_channel_mask_ && !visualize_one_channel_mask_), DPT_UPWARD_SHIFT); // Zero copy mode if images not needed downstream
             RCLCPP_INFO(this->get_logger(), "Inference DPT complete");
             publishFullPointCloud(depth_output);
             RCLCPP_INFO(this->get_logger(), "Depth Output Published");
