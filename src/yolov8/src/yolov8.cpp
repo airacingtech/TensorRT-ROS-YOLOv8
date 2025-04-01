@@ -801,7 +801,7 @@ void YoloV8::getOneChannelSegmentationMask(const std::vector<Object>& objects,
             int globalCenterY = y_offset + maskCenterY;
             
             // Define the global 3x3 region around the center
-            int radius = 0;
+            int radius = 2;
             for (int dy = -radius; dy <= radius; dy++) {
                 for (int dx = -radius; dx <= radius; dx++) {
                     int globalX = globalCenterX + dx;

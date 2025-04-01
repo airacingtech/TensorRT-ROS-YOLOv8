@@ -155,7 +155,8 @@ cv::Mat DepthAnything::predict(cv::Mat& image, bool infer_mode=true, int upward_
     int orig_h = image.rows;
 
     // Preprocessing
-    std::vector<float> input = infer_mode ? preprocess(std::move(image), upward_shift) : preprocess(image, upward_shift); // preprocess by default makes a copy
+    // std::vector<float> input = infer_mode ? preprocess(std::move(image), upward_shift) : preprocess(image, upward_shift); // preprocess by default makes a copy
+    std::vector<float> input = perprocess(image, upward_shift); // Preprocess by default makes a copu
     cudaMemcpyAsync(buffer[0], input.data(), 3 * input_h * input_w * sizeof(float), cudaMemcpyHostToDevice, stream);
 
     // Inference using depth estimation model

@@ -33,9 +33,9 @@ class YoloV8Node : public rclcpp::Node
             this->declare_parameter<std::vector<std::string>>("camera_topics", std::vector<std::string>{"/vimba_rear"});
             this->declare_parameter<std::string>("camera_topic_suffix", "/image");
             this->declare_parameter<float>("camera_buffer_hz", 25.0);
-            this->declare_parameter<bool>("visualize_masks", true);
+            this->declare_parameter<bool>("visualize_masks", false);
             this->declare_parameter<bool>("enable_one_channel_mask", true);
-            this->declare_parameter<bool>("visualize_one_channel_mask", true);
+            this->declare_parameter<bool>("visualize_one_channel_mask", false);
             this->declare_parameter<int>("target_width", 1056);
             this->declare_parameter<int>("target_height", 1056);
 
@@ -199,7 +199,7 @@ class YoloV8Node : public rclcpp::Node
             RCLCPP_INFO(this->get_logger(), "Running DPT inference");
             cv::Mat depth_output = dpt_.predict(images[0], (!visualize_masks_ && !enable_one_channel_mask_ && !visualize_one_channel_mask_), DPT_UPWARD_SHIFT); // Zero copy mode if images not needed downstream
             RCLCPP_INFO(this->get_logger(), "Inference DPT complete");
-            publishFullPointCloud(depth_output);
+            // publishFullPointCloud(depth_output);
             RCLCPP_INFO(this->get_logger(), "Depth Output Published");
 
 
@@ -527,22 +527,23 @@ class YoloV8Node : public rclcpp::Node
             int img_width = image_msg->width;
             int img_height = image_msg->height;
             yoloV8_.getOneChannelSegmentationMask(objects, oneChannelMask, img_height, img_width, 0.9);
-            // Use ROS cv_bridge to convert cv::Mat to sensor_msgs::msg::Image and take header from original camera image
-            try {
-                cv_bridge::CvImage cvBridgeOneChannelMask = cv_bridge::CvImage(
-                    image_msg->header, "mono8", oneChannelMask
-                );
-                detectionMsg.seg_mask_one_channel = *cvBridgeOneChannelMask.toImageMsg();
-            } catch (cv_bridge::Exception& e) {
-                RCLCPP_ERROR(this->get_logger(), "cv_bridge exception: %s", e.what());
-                return;
-            }
+            publishObjectPointCloud(depthimage, oneChannelMask);
 
             // Publish the one channel mask with RGB color for visualization only
             if (visualize_one_channel_mask) {
+
+                // Use ROS cv_bridge to convert cv::Mat to sensor_msgs::msg::Image and take header from original camera image
+                try {
+                    cv_bridge::CvImage cvBridgeOneChannelMask = cv_bridge::CvImage(
+                        image_msg->header, "mono8", oneChannelMask
+                    );
+                    detectionMsg.seg_mask_one_channel = *cvBridgeOneChannelMask.toImageMsg();
+                } catch (cv_bridge::Exception& e) {
+                    RCLCPP_ERROR(this->get_logger(), "cv_bridge exception: %s", e.what());
+                    return;
+                }
+
                 // Publish the overlayed pointcloud
-                publishObjectPointCloud(depthimage, oneChannelMask);
-                
                 cv::Mat oneChannelMaskRGB8 = visualizeOneChannelMask(oneChannelMask);
                 cv::Mat oneChannelDepthRGB8 = visualizeDepth(depthimage);
 

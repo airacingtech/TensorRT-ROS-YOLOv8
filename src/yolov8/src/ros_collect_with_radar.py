@@ -18,26 +18,29 @@ class PointCloudProcessor(Node):
     def __init__(self):
         super().__init__('pointcloud_processor')
         
-        # Create separate callback groups for subscribers and timer
+        # Create separate callback groups for subscribers and timers
         sub_callback_group = MutuallyExclusiveCallbackGroup()
-        timer_callback_group = MutuallyExclusiveCallbackGroup()
+        processing_timer_callback_group = MutuallyExclusiveCallbackGroup()
+        csv_timer_callback_group = MutuallyExclusiveCallbackGroup()
         
         # Declare parameters
         self.declare_parameter('radar_topic', '/radar_rear/points/filtered')
         self.declare_parameter('camera_topic', '/dpt/filtered_point_cloud')
-        self.declare_parameter('timer_frequency', 15.0)  # Hz
+        self.declare_parameter('processing_frequency', 15.0)  # Hz
+        self.declare_parameter('csv_write_frequency', 5.0)    # Hz
         self.declare_parameter('csv_output_path', 'detection_errors.csv')
         
         # Processing parameters
         self.declare_parameter('camera_agg_mode', 'MEDIAN')  # MEDIAN or AVERAGE
-        self.declare_parameter('camera_temporal', False)     # Whether to use temporal aggregation
-        self.declare_parameter('temporal_buffer_size', 3)    # Size of temporal buffer
+        self.declare_parameter('camera_temporal', True)     # Whether to use temporal aggregation
+        self.declare_parameter('temporal_buffer_size', 5)    # Size of temporal buffer
         self.declare_parameter('radar_azimuth_epsilon', 0.06) # Azimuth range in radians
         
         # Get parameters
         radar_topic = self.get_parameter('radar_topic').value
         camera_topic = self.get_parameter('camera_topic').value
-        timer_frequency = self.get_parameter('timer_frequency').value
+        processing_frequency = self.get_parameter('processing_frequency').value
+        csv_write_frequency = self.get_parameter('csv_write_frequency').value
         self.csv_output_path = self.get_parameter('csv_output_path').value
         
         # Get processing parameters
@@ -71,11 +74,18 @@ class PointCloudProcessor(Node):
             callback_group=sub_callback_group
         )
         
-        # Create timer
-        self.timer = self.create_timer(
-            1.0 / timer_frequency,
-            self.timer_callback,
-            callback_group=timer_callback_group
+        # Create processing timer
+        self.processing_timer = self.create_timer(
+            1.0 / processing_frequency,
+            self.processing_timer_callback,
+            callback_group=processing_timer_callback_group
+        )
+        
+        # Create CSV writing timer
+        self.csv_timer = self.create_timer(
+            1.0 / csv_write_frequency,
+            self.csv_timer_callback,
+            callback_group=csv_timer_callback_group
         )
         
         # Initialize raw data buffers
@@ -92,6 +102,12 @@ class PointCloudProcessor(Node):
         # Memory buffer for radar detection (1 entry)
         self.radar_memory_buffer = None
         
+        # Store processed detections for CSV writing
+        self.latest_radar_detection = None
+        self.latest_camera_detection = None
+        self.latest_error = None
+        self.has_new_data = False
+        
         # Initialize CSV file
         self.initialize_csv()
         
@@ -99,7 +115,8 @@ class PointCloudProcessor(Node):
             f"PointCloud processor initialized:\n"
             f"  Radar topic: {radar_topic}\n"
             f"  Camera topic: {camera_topic}\n"
-            f"  Timer frequency: {timer_frequency} Hz\n"
+            f"  Processing frequency: {processing_frequency} Hz\n"
+            f"  CSV write frequency: {csv_write_frequency} Hz\n"
             f"  Camera aggregation mode: {self.camera_agg_mode}\n"
             f"  Camera temporal aggregation: {self.camera_temporal}\n"
             f"  Temporal buffer size: {self.temporal_buffer_size}\n"
@@ -370,10 +387,11 @@ class PointCloudProcessor(Node):
             'error_euclidean': error_euclidean
         }
     
-    def timer_callback(self):
+    def processing_timer_callback(self):
         """
-        Timer callback to process pointclouds, match detections, and write to CSV.
-        This runs at the frequency specified by the timer_frequency parameter.
+        Processing timer callback to process pointclouds and match detections.
+        This runs at the frequency specified by the processing_frequency parameter.
+        Results are stored for the CSV timer to write.
         """
         # Check if we have both pointclouds
         if self.radar_pointcloud is not None and self.camera_pointcloud is not None:
@@ -430,10 +448,14 @@ class PointCloudProcessor(Node):
                 error = self.calculate_error(radar_detection, camera_detection)
                 
                 if error:
-                    # Write to CSV
-                    self.write_to_csv(radar_detection, camera_detection, error)
+                    # Store the latest detections and error for CSV writing
+                    self.latest_radar_detection = radar_detection
+                    self.latest_camera_detection = camera_detection
+                    self.latest_error = error
+                    self.has_new_data = True
+                    
                     self.get_logger().info(
-                        f"Processed pointclouds and wrote to CSV. Radial error: {error['error_r']:.3f}m, "
+                        f"Processed pointclouds. Radial error: {error['error_r']:.3f}m, "
                         f"Euclidean error: {error['error_euclidean']:.3f}m"
                     )
             else:
@@ -464,6 +486,23 @@ class PointCloudProcessor(Node):
         self.camera_pointcloud = None
         self.radar_timestamp = None
         self.camera_timestamp = None
+    
+    def csv_timer_callback(self):
+        """
+        CSV timer callback to write the latest detections to the CSV file.
+        This runs at the frequency specified by the csv_write_frequency parameter.
+        """
+        # Check if we have new data to write
+        if self.has_new_data:
+            self.write_to_csv(
+                self.latest_radar_detection,
+                self.latest_camera_detection,
+                self.latest_error
+            )
+            self.get_logger().info("Wrote latest detections to CSV")
+            self.has_new_data = False
+        else:
+            self.get_logger().debug("No new data to write to CSV")
     
     def write_to_csv(self, radar_detection, camera_detection, error):
         """
