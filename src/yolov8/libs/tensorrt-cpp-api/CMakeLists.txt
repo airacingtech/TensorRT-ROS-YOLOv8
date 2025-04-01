@@ -13,8 +13,8 @@ set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake" ${CMAKE_MODULE_PATH})
 
 # ----------- Set TENSORT_DIR for TENSRORT TAR INSTALL HERE ----------
 # Specify the path to TensorRT root dir for FindTensorRT.cmake to find the libraries
-# set(TensorRT_DIR $ENV{HOME}/libs/TensorRT-8.6.1.6/)
-set(TensorRT_DIR /usr/src/tensorrt/)
+set(TensorRT_DIR $ENV{HOME}/libs/TensorRT-8.6.1.6/)
+# set(TensorRT_DIR /usr/src/tensorrt/)
 # ----------- Set TENSORT_DIR for TENSRORT TAR INSTALL HERE ----------
 
 # Check if the path to TensorRT root dir exists
