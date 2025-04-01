@@ -137,8 +137,16 @@ class YoloV8Node : public rclcpp::Node
         * @param image_msg: The image message from the camera
         * @param topic: The ROS topic the image message was published on
         */
-        void addToBufferCallback(const sensor_msgs::msg::Image::SharedPtr &image_msg, const std::string topic) {
-            std::cout << "Received image message on topic " << topic << std::endl;
+        void addToBufferCallback(const sensor_msgs::msg::Image::UniquePtr &image_msg, const std::string topic) {
+            if (!msg) {
+                RCLCPP_WARN(this->get_logger(), "Received null image message");
+                return;
+            } else {
+                std::cout << "Received image message on topic " << topic << std::endl;
+            }
+            
+        // void addToBufferCallback(const sensor_msgs::msg::Image::SharedPtr &image_msg, const std::string topic) {
+        //     std::cout << "Received image message on topic " << topic << std::endl;
             std::unique_lock<std::mutex> lock(buffer_mutex_);
             current_buffer_[topic] = image_msg; // No need to move since RMW will keep the message valid
 
