@@ -64,7 +64,7 @@ inline bool tryParseFloat(const std::string& s, float& value, const std::string&
     }
 }
 
-inline std::string parseArguments(int argc, char* argv[], YoloV8Config& config, std::string& yolo_ModelPath, std::string& dpt_ModelPath) {
+inline std::string parseArguments(int argc, char* argv[], YoloV8Config& config) {
     if (argc == 1) {
         showHelp(argv);
         return "Error: No arguments provided.";
@@ -77,29 +77,30 @@ inline std::string parseArguments(int argc, char* argv[], YoloV8Config& config, 
             std::string flag = argument.substr(2);
             std::string nextArgument;
 
-            if (flag == "yolo-model-filepath") {
-                if (!tryGetNextArgument(argc, argv, i, nextArgument, flag))
-                    return "Error: Unable to get next argument for flag 'model'.";
+            // if (flag == "yolo-model-filepath") {
+            //     if (!tryGetNextArgument(argc, argv, i, nextArgument, flag))
+            //         return "Error: Unable to get next argument for flag 'model'.";
 
-                if (!doesFileExist(nextArgument)) {
-                    return "Error: Unable to find model at path '" + nextArgument + "' for flag '" + flag + "'.";
-                }
+            //     if (!doesFileExist(nextArgument)) {
+            //         return "Error: Unable to find model at path '" + nextArgument + "' for flag '" + flag + "'.";
+            //     }
 
-                yolo_ModelPath = nextArgument;
-            }
+            //     yolo_ModelPath = nextArgument;
+            // }
 
-            else if (flag == "dpt-model-filepath") {
-                if (!tryGetNextArgument(argc, argv, i, nextArgument, flag))
-                    return "Error: Unable to get next argument for flag 'model'.";
+            // else if (flag == "dpt-model-filepath") {
+            //     if (!tryGetNextArgument(argc, argv, i, nextArgument, flag))
+            //         return "Error: Unable to get next argument for flag 'model'.";
 
-                if (!doesFileExist(nextArgument)) {
-                    return "Error: Unable to find model at path '" + nextArgument + "' for flag '" + flag + "'.";
-                }
+            //     if (!doesFileExist(nextArgument)) {
+            //         return "Error: Unable to find model at path '" + nextArgument + "' for flag '" + flag + "'.";
+            //     }
 
-                dpt_ModelPath = nextArgument;
-            }
+            //     dpt_ModelPath = nextArgument;
+            // }
 
-            else if (flag == "prob-threshold") {
+            if (flag == "prob-threshold") {
+            // else if (flag == "prob-threshold") {
                 if (!tryGetNextArgument(argc, argv, i, nextArgument, flag))
                     return "Error: Unable to get next argument for flag 'prob-threshold'.";
 
@@ -254,9 +255,9 @@ inline std::string parseArguments(int argc, char* argv[], YoloV8Config& config, 
         }
     }
 
-    if (yolo_ModelPath.empty() && dpt_ModelPath.empty()) {
-        return "Error: No arguments provided for flag 'model'.";
-    }
+    // if (yolo_ModelPath.empty() && dpt_ModelPath.empty()) {
+    //     return "Error: No arguments provided for flag 'model'.";
+    // }
 
     // Return success represented by an empty string
     return "";

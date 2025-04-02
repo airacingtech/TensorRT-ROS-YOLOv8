@@ -1,5 +1,32 @@
 #include "utils.h"
 
+std::string getFrameIdFromTopic(const std::string &camera_topic) {
+    // Extract the relevant part from the topic name
+    // Example: "/vimba_rear/image/ptr" -> "camera_rear"
+    
+    // Remove any leading '/' character
+    std::string clean_topic = camera_topic;
+    if (clean_topic.at(0) == '/') {
+        clean_topic = clean_topic.substr(1);
+    }
+    
+    // Find the first part of the topic (before the first '/')
+    size_t pos = clean_topic.find('/');
+    std::string topic_part = clean_topic;
+    if (pos != std::string::npos) {
+        topic_part = clean_topic.substr(0, pos);
+    }
+    
+    // Extract the facing by removing "vimba_" prefix if it exists
+    std::string facing = topic_part;
+    if (topic_part.find("vimba_") == 0) {
+        facing = topic_part.substr(6); // Length of "vimba_"
+    }
+    
+    // Return the frame ID
+    return "camera_" + facing;
+}
+
 bool endsWith(const std::string& str, const std::string& suffix) {
     return str.size() >= suffix.size() && 
            str.compare(str.size() - suffix.size(), suffix.size(), suffix) == 0;

@@ -52,3 +52,11 @@ private:
 	void build(std::string onnxPath, nvinfer1::ILogger& logger);
 	bool saveEngine(const std::string& filename);
 };
+
+class LoggerTRT : public nvinfer1::ILogger {
+    void log(Severity severity, const char* msg) noexcept override {
+        // Only output logs with severity greater than warning
+        if (severity <= Severity::kWARNING)
+            std::cout << msg << std::endl;
+    }
+};
