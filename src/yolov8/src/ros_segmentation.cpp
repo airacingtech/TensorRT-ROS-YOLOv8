@@ -15,14 +15,9 @@
 #include "yolov8_interfaces/msg/yolov8_b_box.hpp"
 
 #include "rclcpp_components/register_node_macro.hpp"
-
+// RCLCPP_DEBUG_THROTTLED(rclcpp::get_logger("rclcpp"), 100, "Debug message");
 using std::placeholders::_1;
-
-// #define F 256.6171  // # Focal length in x
-// #define CX 254.2069  // # Principal point x
-// #define CY 195.0000  // 202.1108  # Principal point y 384 height
-// #define FRAME_ID "camera_rear"
-#define DPT_UPWARD_SHIFT 0 // TODO: Make this a ROS parameter (need more thinking, probably this needs to be done in the dataset of the depth model training.)
+#define DPT_UPWARD_SHIFT 0 // TODO: Need more thinking, probably this needs to be done in the dataset of the depth model training.
 LoggerTRT logger_trt;
 
 namespace yolov8_dpt
@@ -33,6 +28,7 @@ namespace yolov8_dpt
             YoloV8Node(const rclcpp::NodeOptions & options)
             : Node("yolo_v8_dpt", options)
             {
+                // If you want to do ros2 run, change the parameters here:
                 // Declare parameters with their default values.
                 this->declare_parameter<std::string>("yolo_onnx_path", "/home/autera-admin/ART/race_common/src/external/TensorRT-ROS-YOLOv8/src/yolov8/models/best.onnx");
                 this->declare_parameter<std::string>("dpt_engine_path","/home/autera-admin/ART/race_common/src/external/TensorRT-ROS-YOLOv8/src/yolov8/models/engines/DepthAnythingv1_11-Dec_12-04-50740ac911a2_latest_opset19.engine");
@@ -158,16 +154,11 @@ namespace yolov8_dpt
             * @param image_msg: The image message from the camera
             * @param topic: The ROS topic the image message was published on
             */
-            // void addToBufferCallback(const sensor_msgs::msg::Image::UniquePtr &image_msg, const std::string topic) {
-            //     if (!msg) {
-            //         RCLCPP_WARN(this->get_logger(), "Received null image message");
-            //         return;
-            //     } else {
-            //         std::cout << "Received image message on topic " << topic << std::endl;
-            //     }
-                
             void addToBufferCallback(const sensor_msgs::msg::Image::SharedPtr &image_msg, const std::string topic) {
-                std::cout << "Received image message on topic " << topic << std::endl;
+                // For verifying Composable node Addresses
+                std::stringstream ss;
+                ss << "0x" << std::hex << reinterpret_cast<std::uintptr_t>(image_msg.get());
+                std::cout << "Received image message on topic " << topic << " on address: " << ss.str() << std::endl;
                 std::unique_lock<std::mutex> lock(buffer_mutex_);
                 current_buffer_[topic] = image_msg; // No need to move since RMW will keep the message valid
 

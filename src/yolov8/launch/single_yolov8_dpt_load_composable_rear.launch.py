@@ -2,7 +2,8 @@
 Generates the launch description for the yolov8_dpt package.
 '''
 from launch import LaunchDescription
-from launch_ros.actions import Node
+from launch_ros.actions import Node, LoadComposableNodes
+from launch_ros.descriptions import ComposableNode
 from ament_index_python.packages import get_package_share_directory
 import os
 from environs import Env
@@ -65,7 +66,8 @@ def generate_launch_description():
     #TODO: Make it such that it doesn't use the absolute path but relative
     yolo_onnx_path = env.str("YOLO_ONNX_PATH")
     dpt_engine_path = env.str("DPT_ENGINE_PATH")
-    camera_topics = env.str("CAMERA_TOPICS").split(",")
+    # camera_topics = env.str("CAMERA_TOPICS").split(",")
+    camera_topics = ["/vimba_rear"]
     camera_topic_suffix = env.str("CAMERA_TOPIC_SUFFIX")
     camera_buffer_hz = env.float("CAMERA_BUFFER_HZ")
     visualize_masks = env.bool("VISUALIZE_IMAGE_MASKS")
@@ -130,37 +132,31 @@ def generate_launch_description():
     # class_names = ' '.join([f'"{class_name}"' for class_name in class_names])
 
     # TODO Pull parameters out of ros_segmentation and place them here
+    container_name = f"{camera_facing}_camera_camera_container"
     return LaunchDescription([
-        Node(
-            package='yolov8_dpt',
-            executable='ros_segmentation',
-            parameters=[{
-                'yolo_onnx_path': yolo_onnx_path,
-                'dpt_engine_path': dpt_engine_path,
-                'focal_length': focal_length,
-                'cx': cx,
-                'cy': cy,
-                'camera_topics': camera_topics,
-                'camera_topic_suffix': camera_topic_suffix,
-                'camera_buffer_hz': camera_buffer_hz,
-                'visualize_masks': visualize_masks,
-                'visualize_image_pointcloud': visualize_image_pointcloud,
-                'publish_detection': publish_detection,
-                'target_width': target_width,
-                'target_height': target_height,
-            }],
-            arguments=[
-                '--precision', precision,
-                '--calibration-data', calibration_data_directory,
-                '--prob-threshold', str(probability_threshold),
-                '--nms-threshold', str(nms_threshold),
-                '--top-k', str(top_k),
-                '--seg-channels', str(seg_channels),
-                '--seg-h', str(seg_h),
-                '--seg-w', str(seg_w),
-                '--seg-threshold', str(segmentation_threshold),
-                # '--class-names', class_names
-            ],
-            prefix=['nice -n ' + str(nice_level)]
+        LoadComposableNodes(
+            target_container=container_name,
+            composable_node_descriptions=[
+                ComposableNode(
+                    package='yolov8_dpt',
+                    plugin='yolov8_dpt::YoloV8Node',
+                    name='yolov8_dpt_node',
+                    parameters=[{
+                        'yolo_onnx_path': yolo_onnx_path,
+                        'dpt_engine_path': dpt_engine_path,
+                        'focal_length': focal_length,
+                        'cx': cx,
+                        'cy': cy,
+                        'camera_topics': camera_topics,
+                        'camera_topic_suffix': camera_topic_suffix,
+                        'camera_buffer_hz': camera_buffer_hz,
+                        'visualize_masks': visualize_masks,
+                        'visualize_image_pointcloud': visualize_image_pointcloud,
+                        'publish_detection': publish_detection,
+                        'target_width': target_width,
+                        'target_height': target_height,
+                    }],
+                )
+            ]
         )
     ])
