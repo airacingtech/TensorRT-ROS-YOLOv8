@@ -101,7 +101,7 @@ def generate_launch_description():
                 ComposableNode(
                     package='yolov8_dpt',
                     plugin='yolov8_dpt::YoloV8Node',
-                    name='',
+                    name='yolov8_dpt_node',
                     parameters=[{
                         'yolo_onnx_path': yolo_onnx_path,
                         'dpt_engine_path': dpt_engine_path,

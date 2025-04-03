@@ -52,19 +52,46 @@ target_include_directories(DPT_TRT PUBLIC
 )
 target_link_libraries(DPT_TRT PUBLIC ${OpenCV_LIBS} ${CUDA_LIBRARIES} ${TensorRT_LIBRARIES} cuda_postprocessing)
 
+# Build ROS2 component library
+add_library(yolov8_component SHARED src/ros_segmentation.cpp)
+target_compile_definitions(yolov8_component 
+  PRIVATE "BUILD_COMPONENT=1"
+)
+
+ament_target_dependencies(yolov8_component
+  rclcpp
+  sensor_msgs
+  cv_bridge
+  yolov8_interfaces
+  rclcpp_components
+)
+target_link_libraries(yolov8_component YoloV8_TRT DPT_TRT) #${rclcpp_components_LIBRARIES})
+
+# Register the component
+rclcpp_components_register_nodes(yolov8_component 
+  "yolov8_dpt::YoloV8Node")
+
 # # Add utility library for command line arguments
 # add_library(CmdLineUtil SHARED src/cmd_line_util.h)
 # target_include_directories(CmdLineUtil PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
-# Build ROS2 node
+# Create a standalone executable that uses the component
 add_executable(ros_segmentation src/ros_segmentation.cpp)
-ament_target_dependencies(ros_segmentation rclcpp sensor_msgs cv_bridge yolov8_interfaces rclcpp_components)
-# target_link_libraries(ros_segmentation YoloV8_TRT)
-target_link_libraries(ros_segmentation YoloV8_TRT DPT_TRT)
+target_compile_definitions(ros_segmentation 
+  PRIVATE "BUILD_EXECUTABLE=1"
+)
+ament_target_dependencies(ros_segmentation
+  rclcpp
+  sensor_msgs
+  cv_bridge
+  yolov8_interfaces
+  rclcpp_components  # Added this
+)
+target_link_libraries(ros_segmentation
+  YoloV8_TRT
+  DPT_TRT
+)
 
-# Register the component
-rclcpp_components_register_nodes(ros_segmentation 
-  "yolov8_dpt::YoloV8Node")
 
 # # Install targets
 # install(TARGETS
@@ -74,6 +101,8 @@ rclcpp_components_register_nodes(ros_segmentation
 
 install(TARGETS
   ros_segmentation
+  yolov8_component
+  RUNTIME DESTINATION lib/${PROJECT_NAME}
   LIBRARY DESTINATION lib
   ARCHIVE DESTINATION lib
 )
@@ -114,7 +143,7 @@ install(
 
 # Allows other packages to find and link to the YoloV8_TRT and tensorrt_cpp_api libraries
 ament_export_include_directories(include)
-ament_export_libraries(YOLOV8_TRT tensorrt_cpp_api yolov8_interfaces)
+ament_export_libraries(yolov8_component YOLOV8_TRT tensorrt_cpp_api yolov8_interfaces)
 
 # Generate package information
 ament_package()

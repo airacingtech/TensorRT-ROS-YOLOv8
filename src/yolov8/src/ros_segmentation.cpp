@@ -14,6 +14,8 @@
 #include "yolov8_interfaces/msg/yolov8_seg_mask.hpp"
 #include "yolov8_interfaces/msg/yolov8_b_box.hpp"
 
+#include "rclcpp_components/register_node_macro.hpp"
+
 using std::placeholders::_1;
 
 // #define F 256.6171  // # Focal length in x
@@ -28,8 +30,8 @@ namespace yolov8_dpt
     class YoloV8Node : public rclcpp::Node
     {
         public:
-            YoloV8Node(YoloV8Config yolov8_config)
-            : Node("yolo_v8_dpt"), yolov8_config_(yolov8_config)
+            YoloV8Node(const rclcpp::NodeOptions & options)
+            : Node("yolo_v8_dpt", options)
             {
                 // Declare parameters with their default values.
                 this->declare_parameter<std::string>("yolo_onnx_path", "/home/autera-admin/ART/race_common/src/external/TensorRT-ROS-YOLOv8/src/yolov8/models/best.onnx");
@@ -718,21 +720,30 @@ namespace yolov8_dpt
     };
 }
 
+// Register the component
+RCLCPP_COMPONENTS_REGISTER_NODE(yolov8_dpt::YoloV8Node)
+
+// Only include the main function when building the executable, not the component library
+#if defined(BUILD_EXECUTABLE) || !defined(BUILD_COMPONENT)
 int main(int argc, char *argv[]) {
-    YoloV8Config yolov8_config;
-
-    // Parse arguments
-    std::string parseArgsError = parseArguments(argc, argv, yolov8_config);
-    if (!parseArgsError.empty()) {
-        RCLCPP_WARN(rclcpp::get_logger("rclcpp"), "YOLOv8 arguement parser: %s", parseArgsError.c_str());
-    }
-
     // Create ROS2 Node
     rclcpp::init(argc, argv);
-    rclcpp::spin(std::make_shared<yolov8_dpt::YoloV8Node>(yolov8_config));
+    rclcpp::NodeOptions options;
+    rclcpp::spin(std::make_shared<yolov8_dpt::YoloV8Node>(options));
     rclcpp::shutdown();
     return 0;
 }
+#endif
 
-#include "rclcpp_components/register_node_macro.hpp"
-RCLCPP_COMPONENTS_REGISTER_NODE(yolov8_dpt::YoloV8Node)
+// int main(int argc, char *argv[]) {
+
+//     // Create ROS2 Node
+//     rclcpp::init(argc, argv);
+//     rclcpp::NodeOptions options;
+//     rclcpp::spin(std::make_shared<yolov8_dpt::YoloV8Node>(options));
+//     rclcpp::shutdown();
+//     return 0;
+// }
+
+// #include "rclcpp_components/register_node_macro.hpp"
+// RCLCPP_COMPONENTS_REGISTER_NODE(yolov8_dpt::YoloV8Node)
