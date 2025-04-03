@@ -2,7 +2,8 @@
 Generates the launch description for the yolov8 package.
 '''
 from launch import LaunchDescription
-from launch_ros.actions import Node
+from launch_ros.actions import Node, LoadComposableNodes
+from launch_ros.descriptions import ComposableNode
 from ament_index_python.packages import get_package_share_directory
 import os
 from environs import Env
@@ -51,15 +52,15 @@ def generate_launch_description():
     # class_names = env("CLASS_NAMES").split(",")
 
     # Dynamically Getting Camera Calibration parameters for single camera
-    # if os.path.exists("package://iac_launch/param/cameras_param/cam_front_calib.yaml"):
-    #     # TODO: Parse yaml
-    #     camera_calib = "package://iac_launch/param/cameras_param/cam_front_calib.yaml"
-    #     focal_length = None
-    #     cx, cy = None, None
-    # else: # default values
-    focal_length = 256.6171
-    cx = 254.2069
-    cy = 195.0000
+    if os.path.exists("package://iac_launch/param/cameras_param/cam_front_calib.yaml"):
+        # TODO: Parse yaml
+        camera_calib = "package://iac_launch/param/cameras_param/cam_front_calib.yaml"
+        focal_length = None
+        cx, cy = None, None
+    else: # default values
+        focal_length = 256.6171
+        cx = 254.2069
+        cy = 195.0000
 
     print("YOLOv8 Parameters:")
     print(f"yolo_onnx_path: {yolo_onnx_path}")
@@ -94,36 +95,30 @@ def generate_launch_description():
 
     # TODO Pull parameters out of ros_segmentation and place them here
     return LaunchDescription([
-        Node(
-            package='yolov8_dpt',
-            executable='ros_segmentation',
-            parameters=[{
-                'yolo_onnx_path': yolo_onnx_path,
-                'dpt_engine_path': dpt_engine_path,
-                'focal_length': focal_length,
-                'cx': cx,
-                'cy': cy,
-                'camera_topics': camera_topics,
-                'camera_topic_suffix': camera_topic_suffix,
-                'camera_buffer_hz': camera_buffer_hz,
-                'visualize_masks': visualize_masks,
-                'visualize_image_pointcloud': visualize_image_pointcloud,
-                'publish_detection': publish_detection,
-                'target_width': target_width,
-                'target_height': target_height,
-            }],
-            arguments=[
-                '--precision', precision,
-                '--calibration-data', calibration_data_directory,
-                '--prob-threshold', str(probability_threshold),
-                '--nms-threshold', str(nms_threshold),
-                '--top-k', str(top_k),
-                '--seg-channels', str(seg_channels),
-                '--seg-h', str(seg_h),
-                '--seg-w', str(seg_w),
-                '--seg-threshold', str(segmentation_threshold),
-                # '--class-names', class_names
-            ],
-            # prefix=['nice -n ' + str(nice_level)]
+        LoadComposableNodes(
+            target_container='rear_camera_camera_container',
+            composable_node_descriptions=[
+                ComposableNode(
+                    package='yolov8_dpt',
+                    plugin='yolov8_dpt::YoloV8Node',
+                    name='',
+                    parameters=[{
+                        'yolo_onnx_path': yolo_onnx_path,
+                        'dpt_engine_path': dpt_engine_path,
+                        'focal_length': focal_length,
+                        'cx': cx,
+                        'cy': cy,
+                        'camera_topics': camera_topics,
+                        'camera_topic_suffix': camera_topic_suffix,
+                        'camera_buffer_hz': camera_buffer_hz,
+                        'visualize_masks': visualize_masks,
+                        'visualize_image_pointcloud': visualize_image_pointcloud,
+                        'publish_detection': publish_detection,
+                        'target_width': target_width,
+                        'target_height': target_height,
+                    }],
+                    # prefix=['nice -n ' + str(nice_level)]
+                )
+            ]
         )
     ])

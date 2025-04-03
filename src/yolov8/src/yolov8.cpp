@@ -723,54 +723,11 @@ void YoloV8::drawObjectLabels(cv::Mat& image, const std::vector<Object> &objects
  * @param img_width The width of the original image.
  * @param scale_factor A multiplier for the size of each object's mask (e.g., 0.5 makes it 50% of the original size).
  */
-// void YoloV8::getOneChannelSegmentationMask(const std::vector<Object>& objects,
-//                                              cv::Mat& segMaskOneChannel,
-//                                              int img_height,
-//                                              int img_width,
-//                                              float scale_factor = 0.8f)
-// {
-//     segMaskOneChannel = cv::Mat::zeros(img_height, img_width, CV_8UC1);
-//     if (!objects.empty() && !objects[0].boxMask.empty()) {
-//         int idx = 1;
-//         for (const auto& object: objects) {
-//             // Scale the object's mask if a scale factor is provided (other than 1.0)
-//             cv::Mat scaledMask;
-//             if (scale_factor != 1.0f) {
-//                 cv::resize(object.boxMask, scaledMask, cv::Size(), scale_factor, scale_factor, cv::INTER_NEAREST);
-//             } else {
-//                 scaledMask = object.boxMask;
-//             }
-
-//             // Calculate where to place the scaled mask in the full image.
-//             // Here, we center the scaled mask within the object's bounding rectangle.
-//             int rect_x = object.rect.x;
-//             int rect_y = object.rect.y;
-//             int rect_width = object.rect.width;
-//             int rect_height = object.rect.height;
-//             int x_offset = rect_x + (rect_width - scaledMask.cols) / 2;
-//             int y_offset = rect_y + (rect_height - scaledMask.rows) / 2;
-            
-//             // Create a region of interest (ROI) on the one-channel mask.
-//             cv::Rect roi(x_offset, y_offset, scaledMask.cols, scaledMask.rows);
-//             // Ensure the ROI is within image bounds.
-//             cv::Rect imgRect(0, 0, segMaskOneChannel.cols, segMaskOneChannel.rows);
-//             cv::Rect validROI = roi & imgRect;
-//             if(validROI.area() > 0) {
-//                 // Compute the corresponding region in the scaled mask.
-//                 cv::Rect maskROI(validROI.x - roi.x, validROI.y - roi.y, validROI.width, validROI.height);
-//                 // Set the region of the composite mask with a label value (here, idx)
-//                 segMaskOneChannel(validROI).setTo(idx, scaledMask(maskROI));
-//             }
-//             idx++;
-//         }
-//     }
-// }
-
 void YoloV8::getOneChannelSegmentationMask(const std::vector<Object>& objects,
                                              cv::Mat& segMaskOneChannel,
                                              int img_height,
                                              int img_width,
-                                             float scale_factor)
+                                             float scale_factor = 0.8f)
 {
     segMaskOneChannel = cv::Mat::zeros(img_height, img_width, CV_8UC1);
     if (!objects.empty() && !objects[0].boxMask.empty()) {
@@ -784,7 +741,8 @@ void YoloV8::getOneChannelSegmentationMask(const std::vector<Object>& objects,
                 scaledMask = object.boxMask;
             }
 
-            // Calculate where to place the scaled mask in the full image
+            // Calculate where to place the scaled mask in the full image.
+            // Here, we center the scaled mask within the object's bounding rectangle.
             int rect_x = object.rect.x;
             int rect_y = object.rect.y;
             int rect_width = object.rect.width;
@@ -792,42 +750,84 @@ void YoloV8::getOneChannelSegmentationMask(const std::vector<Object>& objects,
             int x_offset = rect_x + (rect_width - scaledMask.cols) / 2;
             int y_offset = rect_y + (rect_height - scaledMask.rows) / 2;
             
-            // Calculate the center of the scaled mask in the local coordinate system
-            int maskCenterX = scaledMask.cols / 2;
-            int maskCenterY = scaledMask.rows / 2;
-            
-            // Calculate the center of the scaled mask in the global coordinate system
-            int globalCenterX = x_offset + maskCenterX;
-            int globalCenterY = y_offset + maskCenterY;
-            
-            // Define the global 3x3 region around the center
-            int radius = 2;
-            for (int dy = -radius; dy <= radius; dy++) {
-                for (int dx = -radius; dx <= radius; dx++) {
-                    int globalX = globalCenterX + dx;
-                    int globalY = globalCenterY + dy;
-                    
-                    // Check if this pixel is within image boundaries
-                    if (globalX >= 0 && globalX < img_width && globalY >= 0 && globalY < img_height) {
-                        // Calculate corresponding position in scaled mask
-                        int maskX = maskCenterX + dx;
-                        int maskY = maskCenterY + dy;
-                        
-                        // Check if this pixel is within scaled mask boundaries
-                        if (maskX >= 0 && maskX < scaledMask.cols && maskY >= 0 && maskY < scaledMask.rows) {
-                            // // Only set the pixel if the scaled mask has a non-zero value at this position
-                            //if (scaledMask.at<uchar>(maskY, maskX) > 0) {
-                                segMaskOneChannel.at<uchar>(globalY, globalX) = idx;
-                            //}
-                        }
-                    }
-                }
+            // Create a region of interest (ROI) on the one-channel mask.
+            cv::Rect roi(x_offset, y_offset, scaledMask.cols, scaledMask.rows);
+            // Ensure the ROI is within image bounds.
+            cv::Rect imgRect(0, 0, segMaskOneChannel.cols, segMaskOneChannel.rows);
+            cv::Rect validROI = roi & imgRect;
+            if(validROI.area() > 0) {
+                // Compute the corresponding region in the scaled mask.
+                cv::Rect maskROI(validROI.x - roi.x, validROI.y - roi.y, validROI.width, validROI.height);
+                // Set the region of the composite mask with a label value (here, idx)
+                segMaskOneChannel(validROI).setTo(idx, scaledMask(maskROI));
             }
-            
             idx++;
         }
     }
 }
+
+// void YoloV8::getOneChannelSegmentationMask(const std::vector<Object>& objects,
+//                                              cv::Mat& segMaskOneChannel,
+//                                              int img_height,
+//                                              int img_width,
+//                                              float scale_factor)
+// {
+//     segMaskOneChannel = cv::Mat::zeros(img_height, img_width, CV_8UC1);
+//     if (!objects.empty() && !objects[0].boxMask.empty()) {
+//         int idx = 1;
+//         for (const auto& object: objects) {
+//             // Scale the object's mask if a scale factor is provided (other than 1.0)
+//             cv::Mat scaledMask;
+//             if (scale_factor != 1.0f) {
+//                 cv::resize(object.boxMask, scaledMask, cv::Size(), scale_factor, scale_factor, cv::INTER_NEAREST);
+//             } else {
+//                 scaledMask = object.boxMask;
+//             }
+
+//             // Calculate where to place the scaled mask in the full image
+//             int rect_x = object.rect.x;
+//             int rect_y = object.rect.y;
+//             int rect_width = object.rect.width;
+//             int rect_height = object.rect.height;
+//             int x_offset = rect_x + (rect_width - scaledMask.cols) / 2;
+//             int y_offset = rect_y + (rect_height - scaledMask.rows) / 2;
+            
+//             // Calculate the center of the scaled mask in the local coordinate system
+//             int maskCenterX = scaledMask.cols / 2;
+//             int maskCenterY = scaledMask.rows / 2;
+            
+//             // Calculate the center of the scaled mask in the global coordinate system
+//             int globalCenterX = x_offset + maskCenterX;
+//             int globalCenterY = y_offset + maskCenterY;
+            
+//             // Define the global 3x3 region around the center
+//             int radius = 2;
+//             for (int dy = -radius; dy <= radius; dy++) {
+//                 for (int dx = -radius; dx <= radius; dx++) {
+//                     int globalX = globalCenterX + dx;
+//                     int globalY = globalCenterY + dy;
+                    
+//                     // Check if this pixel is within image boundaries
+//                     if (globalX >= 0 && globalX < img_width && globalY >= 0 && globalY < img_height) {
+//                         // Calculate corresponding position in scaled mask
+//                         int maskX = maskCenterX + dx;
+//                         int maskY = maskCenterY + dy;
+                        
+//                         // Check if this pixel is within scaled mask boundaries
+//                         if (maskX >= 0 && maskX < scaledMask.cols && maskY >= 0 && maskY < scaledMask.rows) {
+//                             // // Only set the pixel if the scaled mask has a non-zero value at this position
+//                             //if (scaledMask.at<uchar>(maskY, maskX) > 0) {
+//                                 segMaskOneChannel.at<uchar>(globalY, globalX) = idx;
+//                             //}
+//                         }
+//                     }
+//                 }
+//             }
+            
+//             idx++;
+//         }
+//     }
+// }
 
 /**
  * @brief Function overload to draw object labels on the given image.

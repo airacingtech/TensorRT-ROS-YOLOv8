@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.8)
-project(yolov8)
+project(yolov8_dpt)
 
 # Set compiler warnings if using GCC or Clang
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -20,6 +20,7 @@ find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(cv_bridge REQUIRED)
 find_package(yolov8_interfaces REQUIRED)
+find_package(rclcpp_components REQUIRED)
 
 # Set C++ version and optimization level
 set(CMAKE_CXX_STANDARD 17)
@@ -57,14 +58,24 @@ target_link_libraries(DPT_TRT PUBLIC ${OpenCV_LIBS} ${CUDA_LIBRARIES} ${TensorRT
 
 # Build ROS2 node
 add_executable(ros_segmentation src/ros_segmentation.cpp)
-ament_target_dependencies(ros_segmentation rclcpp sensor_msgs cv_bridge yolov8_interfaces)
+ament_target_dependencies(ros_segmentation rclcpp sensor_msgs cv_bridge yolov8_interfaces rclcpp_components)
 # target_link_libraries(ros_segmentation YoloV8_TRT)
 target_link_libraries(ros_segmentation YoloV8_TRT DPT_TRT)
 
-# Install targets
+# Register the component
+rclcpp_components_register_nodes(ros_segmentation 
+  "yolov8_dpt::YoloV8Node")
+
+# # Install targets
+# install(TARGETS
+#   ros_segmentation
+#   DESTINATION lib/${PROJECT_NAME}
+# )
+
 install(TARGETS
   ros_segmentation
-  DESTINATION lib/${PROJECT_NAME}
+  LIBRARY DESTINATION lib
+  ARCHIVE DESTINATION lib
 )
 
 # Moves YoloV8_TRT library to the install folder
