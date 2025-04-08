@@ -1,0 +1,535 @@
+Panels:
+  - Class: rviz_common/Displays
+    Help Height: 0
+    Name: Displays
+    Property Tree Widget:
+      Expanded:
+        - /Global Options1
+        - /Status1
+        - /Image1
+        - /Image2
+        - /Image2/Topic1
+        - /rear_depth1
+        - /front_depth1
+        - /PointCloud22
+        - /PointCloud24/Status1
+        - /front_yolo1
+        - /front_yolo1/Status1
+        - /front_yolo1/Topic1
+        - /rear_yolo1
+        - /rear_yolo1/Topic1
+      Splitter Ratio: 0.5
+    Tree Height: 140
+  - Class: rviz_common/Selection
+    Name: Selection
+  - Class: rviz_common/Tool Properties
+    Expanded:
+      - /2D Goal Pose1
+      - /Publish Point1
+    Name: Tool Properties
+    Splitter Ratio: 0.5886790156364441
+  - Class: rviz_common/Views
+    Expanded:
+      - /Current View1
+      - /Current View1/Focal Point1
+    Name: Views
+    Splitter Ratio: 0.5
+  - Class: rviz_common/Time
+    Experimental: false
+    Name: Time
+    SyncMode: 0
+    SyncSource: PointCloud2
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Alpha: 0.5
+      Cell Size: 1
+      Class: rviz_default_plugins/Grid
+      Color: 160; 160; 164
+      Enabled: true
+      Line Style:
+        Line Width: 0.029999999329447746
+        Value: Lines
+      Name: Grid
+      Normal Cell Count: 0
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0
+      Plane: XY
+      Plane Cell Count: 10
+      Reference Frame: <Fixed Frame>
+      Value: true
+    - Class: rviz_default_plugins/Image
+      Enabled: true
+      Max Value: 1
+      Median window: 5
+      Min Value: 0
+      Name: Image
+      Normalize Range: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /vimba_front/image/ptr
+      Value: true
+    - Class: rviz_default_plugins/Image
+      Enabled: true
+      Max Value: 1
+      Median window: 5
+      Min Value: 0
+      Name: Image
+      Normalize Range: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /vimba_rear/image/ptr
+      Value: true
+    - Class: rviz_default_plugins/Image
+      Enabled: true
+      Max Value: 1
+      Median window: 5
+      Min Value: 0
+      Name: rear_depth
+      Normalize Range: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /dpt/vimba_rear/depth_image
+      Value: true
+    - Class: rviz_default_plugins/Image
+      Enabled: true
+      Max Value: 1
+      Median window: 5
+      Min Value: 0
+      Name: front_depth
+      Normalize Range: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /dpt/vimba_front/depth_image
+      Value: true
+    - Alpha: 1
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds:
+        Max Value: 10
+        Min Value: -10
+        Value: true
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz_default_plugins/PointCloud2
+      Color: 255; 255; 255
+      Color Transformer: Intensity
+      Decay Time: 0
+      Enabled: true
+      Invert Rainbow: false
+      Max Color: 255; 255; 255
+      Max Intensity: 4096
+      Min Color: 0; 0; 0
+      Min Intensity: 0
+      Name: PointCloud2
+      Position Transformer: XYZ
+      Selectable: true
+      Size (Pixels): 3
+      Size (m): 0.05999999865889549
+      Style: Flat Squares
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /dpt/full_point_cloud
+      Use Fixed Frame: true
+      Use rainbow: true
+      Value: true
+    - Alpha: 1
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds:
+        Max Value: 10
+        Min Value: -10
+        Value: true
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz_default_plugins/PointCloud2
+      Color: 255; 0; 100
+      Color Transformer: FlatColor
+      Decay Time: 0
+      Enabled: true
+      Invert Rainbow: false
+      Max Color: 255; 255; 255
+      Max Intensity: 4096
+      Min Color: 0; 0; 0
+      Min Intensity: 0
+      Name: PointCloud2
+      Position Transformer: XYZ
+      Selectable: true
+      Size (Pixels): 20
+      Size (m): 0.20000000298023224
+      Style: Points
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /dpt/filtered_point_cloud
+      Use Fixed Frame: true
+      Use rainbow: true
+      Value: true
+    - Alpha: 1
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds:
+        Max Value: 4.953534126281738
+        Min Value: -4.914083480834961
+        Value: true
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz_default_plugins/PointCloud2
+      Color: 255; 0; 255
+      Color Transformer: FlatColor
+      Decay Time: 0
+      Enabled: true
+      Invert Rainbow: false
+      Max Color: 255; 255; 255
+      Max Intensity: 4096
+      Min Color: 0; 0; 0
+      Min Intensity: 0
+      Name: PointCloud2
+      Position Transformer: XYZ
+      Selectable: true
+      Size (Pixels): 3
+      Size (m): 0.30000001192092896
+      Style: Flat Squares
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /radar_rear/points
+      Use Fixed Frame: true
+      Use rainbow: true
+      Value: true
+    - Class: rviz_default_plugins/TF
+      Enabled: true
+      Frame Timeout: 15
+      Frames:
+        All Enabled: false
+        base_footprint:
+          Value: true
+        base_link:
+          Value: true
+        camera_front:
+          Value: true
+        camera_front_left_center:
+          Value: true
+        camera_front_right_center:
+          Value: true
+        camera_left:
+          Value: true
+        camera_rear:
+          Value: true
+        camera_right:
+          Value: true
+        cg:
+          Value: true
+        front_axle_middle:
+          Value: true
+        gps_antenna_front:
+          Value: true
+        gps_antenna_left:
+          Value: true
+        gps_antenna_rear:
+          Value: true
+        gps_antenna_right:
+          Value: true
+        gps_bottom:
+          Value: true
+        gps_top:
+          Value: true
+        imu_bottom:
+          Value: true
+        imu_top:
+          Value: true
+        imu_vectornav:
+          Value: true
+        luminar_front:
+          Value: true
+        luminar_left:
+          Value: true
+        luminar_rear:
+          Value: true
+        luminar_right:
+          Value: true
+        model:
+          Value: true
+        nav_base:
+          Value: true
+        radar_front:
+          Value: true
+        radar_rear:
+          Value: true
+        rear_axle_middle:
+          Value: true
+        rear_axle_middle_ground:
+          Value: true
+        tyre_fl:
+          Value: true
+        tyre_fr:
+          Value: true
+        tyre_rl:
+          Value: true
+        tyre_rr:
+          Value: true
+        vectornav:
+          Value: true
+        vimba_front:
+          Value: true
+        vimba_front_left_center:
+          Value: true
+        vimba_front_right_center:
+          Value: true
+        vimba_left:
+          Value: true
+        vimba_rear:
+          Value: true
+        vimba_right:
+          Value: true
+      Marker Scale: 3
+      Name: TF
+      Show Arrows: true
+      Show Axes: true
+      Show Names: false
+      Tree:
+        base_link:
+          base_footprint:
+            rear_axle_middle_ground:
+              {}
+          camera_front:
+            vimba_front:
+              {}
+          camera_front_left_center:
+            vimba_front_left_center:
+              {}
+          camera_front_right_center:
+            vimba_front_right_center:
+              {}
+          camera_left:
+            vimba_left:
+              {}
+          camera_rear:
+            vimba_rear:
+              {}
+          camera_right:
+            vimba_right:
+              {}
+          cg:
+            nav_base:
+              {}
+          front_axle_middle:
+            tyre_fl:
+              {}
+            tyre_fr:
+              {}
+          gps_antenna_front:
+            {}
+          gps_antenna_left:
+            {}
+          gps_antenna_rear:
+            {}
+          gps_antenna_right:
+            {}
+          gps_bottom:
+            imu_bottom:
+              {}
+          gps_top:
+            imu_top:
+              {}
+          luminar_front:
+            {}
+          luminar_left:
+            {}
+          luminar_rear:
+            {}
+          luminar_right:
+            {}
+          model:
+            {}
+          radar_front:
+            {}
+          radar_rear:
+            {}
+          rear_axle_middle:
+            tyre_rl:
+              {}
+            tyre_rr:
+              {}
+          vectornav:
+            imu_vectornav:
+              {}
+      Update Interval: 0
+      Value: true
+    - Alpha: 1
+      Autocompute Intensity Bounds: true
+      Autocompute Value Bounds:
+        Max Value: 10
+        Min Value: -10
+        Value: true
+      Axis: Z
+      Channel Name: intensity
+      Class: rviz_default_plugins/PointCloud2
+      Color: 0; 255; 255
+      Color Transformer: FlatColor
+      Decay Time: 0
+      Enabled: true
+      Invert Rainbow: false
+      Max Color: 255; 255; 255
+      Max Intensity: 0.9550018310546875
+      Min Color: 0; 0; 0
+      Min Intensity: 0.9550018310546875
+      Name: PointCloud2
+      Position Transformer: XYZ
+      Selectable: true
+      Size (Pixels): 3
+      Size (m): 2
+      Style: Flat Squares
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /radar_rear/points/filtered
+      Use Fixed Frame: true
+      Use rainbow: true
+      Value: true
+    - Class: rviz_default_plugins/Image
+      Enabled: true
+      Max Value: 1
+      Median window: 5
+      Min Value: 0
+      Name: front_yolo
+      Normalize Range: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /yolov8/vimba_front/image
+      Value: true
+    - Class: rviz_default_plugins/Image
+      Enabled: true
+      Max Value: 1
+      Median window: 5
+      Min Value: 0
+      Name: rear_yolo
+      Normalize Range: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /yolov8/vimba_front/image
+      Value: true
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: camera_rear
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+      Hide Inactive Objects: true
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+      Line color: 128; 128; 0
+    - Class: rviz_default_plugins/SetInitialPose
+      Covariance x: 0.25
+      Covariance y: 0.25
+      Covariance yaw: 0.06853891909122467
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /initialpose
+    - Class: rviz_default_plugins/SetGoal
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /goal_pose
+    - Class: rviz_default_plugins/PublishPoint
+      Single click: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /clicked_point
+  Transformation:
+    Current:
+      Class: rviz_default_plugins/TF
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 428.6947021484375
+      Enable Stereo Rendering:
+        Stereo Eye Separation: 0.05999999865889549
+        Stereo Focal Distance: 1
+        Swap Stereo Eyes: false
+        Value: false
+      Focal Point:
+        X: 16.169239044189453
+        Y: 2.240701913833618
+        Z: -11.905308723449707
+      Focal Shape Fixed Size: true
+      Focal Shape Size: 0.05000000074505806
+      Invert Z Axis: false
+      Name: Current View
+      Near Clip Distance: 0.009999999776482582
+      Pitch: 0.7597969174385071
+      Target Frame: <Fixed Frame>
+      Value: Orbit (rviz)
+      Yaw: 3.155404806137085
+    Saved: ~
+Window Geometry:
+  Displays:
+    collapsed: false
+  Height: 752
+  Hide Left Dock: false
+  Hide Right Dock: false
+  Image:
+    collapsed: false
+  QMainWindow State: 000000ff00000000fd00000004000000000000028900000257fc020000000cfb0000001200530065006c0065006300740069006f006e00000001e10000009b0000005c00fffffffb0000001e0054006f006f006c002000500072006f007000650072007400690065007302000001ed000001df00000185000000a3fb000000120056006900650077007300200054006f006f02000001df000002110000018500000122fb000000200054006f006f006c002000500072006f0070006500720074006900650073003203000002880000011d000002210000017afb000000100044006900730070006c006100790073010000003d000000c9000000c900fffffffb0000000a0049006d006100670065010000010c0000005b0000002800fffffffb0000002000730065006c0065006300740069006f006e00200062007500660066006500720200000138000000aa0000023a00000294fb00000014005700690064006500530074006500720065006f02000000e6000000d2000003ee0000030bfb0000000c004b0069006e0065006300740200000186000001060000030c00000261fb0000000a0049006d006100670065010000016d0000004b0000002800fffffffb0000001400660072006f006e0074005f0079006f006c006f01000001be0000005f0000002800fffffffb000000120072006500610072005f0079006f006c006f0100000223000000710000002800ffffff000000010000024b00000257fc0200000005fb000000140072006500610072005f00640065007000740068010000003d000001400000002800fffffffb0000001600660072006f006e0074005f006400650070007400680100000183000001110000002800fffffffb0000001e0054006f006f006c002000500072006f00700065007200740069006500730100000041000000780000000000000000fc000000d1000002cf0000000000fffffffa000000000100000002fb0000000a0049006d0061006700650100000000ffffffff0000000000000000fb0000000a0056006900650077007300000006710000010f0000010000fffffffb0000001200530065006c0065006300740069006f006e010000025a000000b20000000000000000000000020000073a00000090fc0100000005fb0000000a0049006d00610067006501000000000000005a0000000000000000fb0000000a0049006d00610067006501000000600000005a0000000000000000fb0000000a0049006d00610067006501000000c0000000820000000000000000fb0000000a0049006d00610067006501000001480000007d0000000000000000fb0000000a00560069006500770073030000004e00000080000002e100000197000000030000056b00000039fc0100000002fb0000000800540069006d006501000000000000056b000002fb00fffffffb0000000800540069006d006501000000000000045000000000000000000000008b0000025700000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  Selection:
+    collapsed: false
+  Time:
+    collapsed: false
+  Tool Properties:
+    collapsed: false
+  Views:
+    collapsed: false
+  Width: 1387
+  X: 381
+  Y: 83
+  front_depth:
+    collapsed: false
+  front_yolo:
+    collapsed: false
+  rear_depth:
+    collapsed: false
+  rear_yolo:
+    collapsed: false

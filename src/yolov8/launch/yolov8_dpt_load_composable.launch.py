@@ -96,7 +96,7 @@ def generate_launch_description():
     # TODO Pull parameters out of ros_segmentation and place them here
     return LaunchDescription([
         LoadComposableNodes(
-            target_container='rear_camera_camera_container',
+            target_container='rear_camera_container',
             composable_node_descriptions=[
                 ComposableNode(
                     package='yolov8_dpt',

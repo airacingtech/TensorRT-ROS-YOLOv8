@@ -132,7 +132,7 @@ def generate_launch_description():
     # class_names = ' '.join([f'"{class_name}"' for class_name in class_names])
 
     # TODO Pull parameters out of ros_segmentation and place them here
-    container_name = f"{camera_facing}_camera_camera_container"
+    container_name = f"{camera_facing}_camera_container"
     return LaunchDescription([
         LoadComposableNodes(
             target_container=container_name,
