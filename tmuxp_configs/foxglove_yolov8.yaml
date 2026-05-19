@@ -1,4 +1,5 @@
-# Description: Tmuxp config to start YOLOv8 ROS nodes with debugging tools
+# Launch the YOLOv8 ROS node alongside a rosbag, Foxglove Bridge, and a detections topic echo.
+# Run from the workspace root: `tmuxp load tmuxp_configs/foxglove_yolov8.yaml`.
 session_name: yolov8
 start_directory: ../
 windows:
@@ -13,6 +14,7 @@ windows:
       - shell_command:
           - source /opt/ros/iron/setup.bash
           - source install/setup.bash
+          # Replace this path with a rosbag containing your CAMERA_TOPICS.
           - ros2 bag play -l ../yolov8_ros_bags/overtaken_right
       - shell_command:
           - source /opt/ros/iron/setup.bash
@@ -21,7 +23,6 @@ windows:
       - shell_command:
           - source /opt/ros/iron/setup.bash
           - source install/setup.bash
-          # Uncomment the line below to enable ros2 topic echo
-          # Sleep for 5 seconds to allow the other nodes to start
           - sleep 5
-          - ros2 topic echo /yolov8/vimba_front_right_center/detections
+          # Replace with one of the /yolov8/<camera>/detections topics from your CAMERA_TOPICS.
+          - ros2 topic echo /yolov8/vimba_front/detections

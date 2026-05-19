@@ -3,7 +3,7 @@
 <package format="3">
   <name>yolov8</name>
   <version>0.0.0</version>
-  <description>A package to inference YOLOv8 in TensorRT C++</description>
+  <description>TensorRT C++ inference node for fine-tuned YOLOv8 segmentation models.</description>
   <maintainer email="64391920+ekberndt@users.noreply.github.com">Eric Berndt</maintainer>
   <license>MIT</license>
 
@@ -11,17 +11,10 @@
 
   <depend>rclcpp</depend>
   <depend>sensor_msgs</depend>
-  <depend>std_msgs</depend>
-  <depend>geometry_msgs</depend>
   <depend>cv_bridge</depend>
   <depend>yolov8_interfaces</depend>
 
   <exec_depend>ros2launch</exec_depend>
-
-  <!-- For custom ROS messages -->
-  <buildtool_depend>rosidl_default_generators</buildtool_depend>
-  <exec_depend>rosidl_default_runtime</exec_depend>
-  <member_of_group>rosidl_interface_packages</member_of_group>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

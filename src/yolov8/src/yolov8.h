@@ -44,79 +44,55 @@ struct YoloV8Config {
     // Pose estimation options
     int numKPS = 17;
     float kpsThreshold = 0.5f;
-    // Class thresholds (default are COCO classes)
-    // If you want to use your own custom classes, you can change the strings where each index of the vector
-    // maps to the class number (i.e. 0 -> "car"). YOU MUST add a color to the COLOR_LIST below for each
-    // class. Match sure the number of colors matches the number of classes.
-    std::vector<std::string> classNames = {
-        "car",
-        "misc0",
-        "misc1",
-        "misc2",
-        "misc3",
-        "misc4",
-        "misc5",
-    };
+    // Class names indexed by the model's class id. Override via the --class-names CLI flag or by
+    // editing yolov8.env. Each entry needs a corresponding color in COLOR_LIST below.
+    std::vector<std::string> classNames = { "car" };
 };
 
 class YoloV8 {
 public:
-    // Builds the onnx model into a TensorRT engine, and loads the engine into memory
+    // Builds the ONNX model into a TensorRT engine and loads it into memory.
     YoloV8(const std::string& onnxModelPath, const YoloV8Config& config);
 
-    // Upload image(s) to GPU then call detectObjects
-    // std::vector<Object> detectObjects(const cv::Mat& imgMat); // Non-batched version
-    std::vector<std::vector<Object>> detectObjects(std::vector<cv::Mat> &imgMat); // Batched version
+    // Upload a batch of host images to the GPU and run inference.
+    std::vector<std::vector<Object>> detectObjects(std::vector<cv::Mat> &imgMats);
 
-    // Run inference on objects uploaded to the GPU
-    // std::vector<Object> detectObjects(const cv::cuda::GpuMat& imgMat); // Non-batched version
-    std::vector<std::vector<Object>> detectObjects(std::vector<cv::cuda::GpuMat> &imgMat);  // Batched version
+    // Run inference on a batch of images already resident on the GPU.
+    std::vector<std::vector<Object>> detectObjects(std::vector<cv::cuda::GpuMat> &gpuImgs);
 
-    // Create a one channel segmentation mask for all segmentation objects
+    // Combine every detection's binary mask into a single channel image where pixel value = 1-based instance id.
     void getOneChannelSegmentationMask(const std::vector<Object>& objects, cv::Mat& segMaskOneChannel, int img_height, int img_width);
 
-    // Draw the object bounding boxes and labels on the image
+    // Draw object bounding boxes, labels, and masks (if present) onto an image.
     void drawObjectLabels(cv::Mat& image, const std::vector<Object> &objects, unsigned int scale = 2);
 
-    // Draw the object bounding boxes and labels on the image and store a binary mask in the given
-    // masks vector for each instance segmentation object.
+    // Overload that also fills `masks` with the binary mask of each detected instance.
     void drawObjectLabels(cv::Mat& image, const std::vector<Object> &objects, std::vector<cv::Mat> &masks, unsigned int scale = 2);
 
-    // Getter for number of classes
     int getNumClasses() const { return CLASS_NAMES.size(); }
-
-    // Getter for CLASS_NAMES
-    std::string getClassName(int i) const { return CLASS_NAMES[i].c_str(); }
-
-    // Getter for batch size
+    std::string getClassName(int i) const { return CLASS_NAMES[i]; }
     int getBatchSize() const { return m_trtEngine->getBatchSize(); }
+    int getInputHeight() const { return m_trtEngine->getInputDims()[0].d[1]; }
+    int getInputWidth() const { return m_trtEngine->getInputDims()[0].d[2]; }
+
 private:
-    // Preprocess the input
     std::vector<std::vector<cv::cuda::GpuMat>> preprocess(const cv::cuda::GpuMat& gpuImg);
-    std::vector<std::vector<cv::cuda::GpuMat>> preprocess(std::vector<cv::cuda::GpuMat> &gpuImg); // Batched version
+    std::vector<std::vector<cv::cuda::GpuMat>> preprocess(std::vector<cv::cuda::GpuMat> &gpuImgs);
 
-    // // Postprocess the output
-    // std::vector<Object> postprocessDetect(std::vector<float>& featureVector);
-
-    // // Postprocess the output for pose model
-    // std::vector<Object> postprocessPose(std::vector<float>& featureVector);
-
-    // Postprocess the output for segmentation model
-    std::vector<std::vector<Object>> postProcessSegmentation(std::vector<std::vector<std::vector<float>>>& batchedFeatureVectors); // Batched version
-    std::vector<Object> postProcessSegmentation(std::vector<std::vector<float>>& featureVectors, int batch_Index);
+    std::vector<std::vector<Object>> postProcessSegmentation(std::vector<std::vector<std::vector<float>>>& batchedFeatureVectors);
+    std::vector<Object> postProcessSegmentation(std::vector<std::vector<float>>& featureVectors, int batch_index);
 
     std::unique_ptr<Engine> m_trtEngine = nullptr;
 
-    // Used for image preprocessing
-    // YoloV8 model expects values between [0.f, 1.f] so we use the following params
-    const std::array<float, 3> SUB_VALS {0.f, 0.f, 0.f};
-    const std::array<float, 3> DIV_VALS {1.f, 1.f, 1.f};
+    // YOLOv8 expects input pixels in [0, 1]; SUB/DIV/NORMALIZE leave defaults.
+    const std::array<float, 3> SUB_VALS{0.f, 0.f, 0.f};
+    const std::array<float, 3> DIV_VALS{1.f, 1.f, 1.f};
     const bool NORMALIZE = true;
-    
-    // Image dimensions gathered from the input image
-    std::vector<float> m_ratio_ = {};
-    std::vector<float> m_imgWidth_ = {};
-    std::vector<float> m_imgHeight_ = {};
+
+    // Per-batch-element resize ratios and original image dimensions, populated by preprocess().
+    std::vector<float> m_ratio_;
+    std::vector<float> m_imgWidth_;
+    std::vector<float> m_imgHeight_;
 
     // Filter thresholds
     const float PROBABILITY_THRESHOLD;

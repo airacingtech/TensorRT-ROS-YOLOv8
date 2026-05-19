@@ -1,19 +1,16 @@
-from launch import LaunchDescription
-from launch_ros.actions import Node
-from ament_index_python.packages import get_package_share_directory
+"""Launch RViz2 preloaded with the yolov8 configuration."""
 import os
 
-def generate_launch_description():
-    """
-    Generate the launch description for launching RViz2 with a yolov8 configuration file.
+from ament_index_python.packages import get_package_share_directory
+from launch import LaunchDescription
+from launch_ros.actions import Node
 
-    Returns:
-        LaunchDescription: The launch description object.
-    """
+
+def generate_launch_description():
     rviz2_config_path = os.path.join(
         get_package_share_directory('yolov8'),
         'config',
-        'yolov8.rviz'
+        'yolov8.rviz',
     )
 
     return LaunchDescription([
@@ -22,6 +19,6 @@ def generate_launch_description():
             executable='rviz2',
             name='rviz2',
             arguments=['-d', rviz2_config_path],
-            output='screen'
+            output='screen',
         )
     ])

@@ -2,6 +2,7 @@
 
 #include <fstream>
 #include <chrono>
+#include <iostream>
 #include <opencv2/opencv.hpp>
 #include <opencv2/core/cuda.hpp>
 #include <opencv2/cudawarping.hpp>
@@ -12,7 +13,6 @@
 #include "NvInfer.h"
 #pragma GCC diagnostic pop
 
-// Utility methods
 namespace Util {
     inline bool doesFileExist(const std::string& filepath) {
         std::ifstream f(filepath.c_str());
@@ -20,24 +20,25 @@ namespace Util {
     }
 
     inline void checkCudaErrorCode(cudaError_t code) {
-        if (code != 0) {
-            std::string errMsg = "CUDA operation failed with code: " + std::to_string(code) + "(" + cudaGetErrorName(code) + "), with message: " + cudaGetErrorString(code);
-            std::cout << errMsg << std::endl;
+        if (code != cudaSuccess) {
+            const std::string errMsg = "CUDA operation failed with code "
+                + std::to_string(code) + " (" + cudaGetErrorName(code)
+                + "): " + cudaGetErrorString(code);
+            std::cerr << errMsg << std::endl;
             throw std::runtime_error(errMsg);
         }
     }
 
     std::vector<std::string> getFilesInDirectory(const std::string& dirPath);
 }
-// Utility Timer
+
+// Monotonic stopwatch used by the benchmark executable.
 template <typename Clock = std::chrono::high_resolution_clock>
-class Stopwatch
-{
+class Stopwatch {
     typename Clock::time_point start_point;
 public:
-    Stopwatch() :start_point(Clock::now()){}
+    Stopwatch() : start_point(Clock::now()) {}
 
-    // Returns elapsed time
     template <typename Rep = typename Clock::duration::rep, typename Units = typename Clock::duration>
     Rep elapsedTime() const {
         std::atomic_thread_fence(std::memory_order_relaxed);
@@ -138,9 +139,9 @@ public:
     // This is done so that it's easier to convert detected coordinates (ex. YOLO model) back to the original reference frame.
     static cv::cuda::GpuMat resizeKeepAspectRatioPadRightBottom(const cv::cuda::GpuMat& input, size_t height, size_t width, const cv::Scalar& bgcolor = cv::Scalar(0, 0, 0));
 
-    [[nodiscard]] const std::vector<nvinfer1::Dims3>& getInputDims() const { return m_inputDims; };
-    [[nodiscard]] const std::vector<nvinfer1::Dims>& getOutputDims() const { return m_outputDims ;};
-    [[nodiscard]] const int getBatchSize() const { return batch_size_; };
+    [[nodiscard]] const std::vector<nvinfer1::Dims3>& getInputDims() const { return m_inputDims; }
+    [[nodiscard]] const std::vector<nvinfer1::Dims>& getOutputDims() const { return m_outputDims; }
+    [[nodiscard]] int getBatchSize() const { return batch_size_; }
 
     // Utility method for transforming triple nested output array into 2D array
     // Should be used when the output batch size is 1, but there are multiple output feature vectors

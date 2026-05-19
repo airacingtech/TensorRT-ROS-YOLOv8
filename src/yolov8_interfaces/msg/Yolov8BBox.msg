@@ -1,4 +1,4 @@
-# 2D bounding box represented by the top left of the box, width, and height for a single object detection
+# Axis-aligned 2D bounding box: top-left corner plus width and height in pixels.
 yolov8_interfaces/Point2D top_left
 int32 rect_width
 int32 rect_height

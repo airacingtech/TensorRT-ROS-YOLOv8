@@ -5,15 +5,13 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
-# Set CUDA early so OpenCV can find it
-# Set the version of CUDA to use
-set(CUDA_VERSION "11.8")
-# # Use the correct version of CUDA
+# CUDA toolkit (override with -DCUDA_VERSION=<x.y>)
+if(NOT DEFINED CUDA_VERSION)
+    set(CUDA_VERSION "11.8")
+endif()
 set(CUDA_TOOLKIT_ROOT_DIR "/usr/local/cuda-${CUDA_VERSION}")
-# # Set CMAKE_CUDA_COMPILER to the correct version of nvcc
 set(CMAKE_CUDA_COMPILER "/usr/local/cuda-${CUDA_VERSION}/bin/nvcc")
 
-# Find dependencies
 find_package(ament_cmake_auto REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
@@ -22,74 +20,51 @@ find_package(yolov8_interfaces REQUIRED)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
-  # the following line skips the linter which checks for copyrights
-  # comment the line when a copyright and license is added to all source files
+  # Skip copyright/cpplint checks: the project ships under MIT and does not enforce per-file headers.
   set(ament_cmake_copyright_FOUND TRUE)
-  # the following line skips cpplint (only works in a git repo)
-  # comment the line when this package is in a git repo and when
-  # a copyright and license is added to all source files
   set(ament_cmake_cpplint_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
 endif()
 
-# Use ccache to speed up rebuilds
+# Use ccache to speed up rebuilds when available
 include(cmake/ccache.cmake)
 
-# Set C++ version and optimization level
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Ofast -DNDEBUG -Wno-deprecated-declarations")
 
-# # CMake Options
-# option(ENABLE_BENCHMARKS "Benchmark the preprocessing, inference, and post processing" OFF)
-# if (ENABLE_BENCHMARKS)
-#     add_compile_definitions(ENABLE_BENCHMARKS)
-# endif()
-
-# Build the TensorRT inference engine library
-# TensorRT is found and linked by the tensorrt-cpp-api
+# TensorRT inference engine (finds TensorRT/CUDA/OpenCV itself)
 add_subdirectory(libs/tensorrt-cpp-api)
 
-# Build the YoloV8 library
+# YoloV8 library wraps the engine with detection/segmentation post-processing.
+# tensorrt_cpp_api already links OpenCV/CUDA/TensorRT PUBLIC, so we inherit them transitively.
 add_library(YoloV8_TRT SHARED src/yolov8.cpp)
-target_link_libraries(YoloV8_TRT PUBLIC tensorrt_cpp_api ${OpenCV_LIBS})
+target_link_libraries(YoloV8_TRT PUBLIC tensorrt_cpp_api)
 target_include_directories(YoloV8_TRT PUBLIC libs/tensorrt-cpp-api/src)
 
+# ROS2 node
 add_executable(ros_segmentation src/ros_segmentation.cpp)
 ament_target_dependencies(ros_segmentation rclcpp sensor_msgs cv_bridge yolov8_interfaces)
 target_link_libraries(ros_segmentation YoloV8_TRT)
 
-#
-install(TARGETS
-  ros_segmentation
-  DESTINATION lib/${PROJECT_NAME}
-)
+install(TARGETS ros_segmentation
+  DESTINATION lib/${PROJECT_NAME})
 
-# Moves YoloV8_TRT library to the install folder
-install(TARGETS
-  YoloV8_TRT
-  tensorrt_cpp_api
+install(TARGETS YoloV8_TRT tensorrt_cpp_api
   LIBRARY DESTINATION lib
   ARCHIVE DESTINATION lib
-  RUNTIME DESTINATION bin
-  DESTINATION lib/${PROJECT_NAME}
-)
+  RUNTIME DESTINATION bin)
 
-# Places the launch, config, and models folders in the install/yolov8/share/yolov8 directory so they can be found by the launch file
-install(DIRECTORY
-  launch
-  config
-  models
+# Launch, config, and models directories go into share/yolov8 so the launch files can locate them.
+install(DIRECTORY launch config models
   DESTINATION share/${PROJECT_NAME}/
-  PATTERN ".gitignore" EXCLUDE # Exclude .gitignore files from being installed
-)
+  PATTERN ".gitignore" EXCLUDE)
 
-install(FILES
-  ../../yolov8.env
+# yolov8.env lives at the workspace root next to this package's directory.
+install(FILES ../../yolov8.env
   DESTINATION share/${PROJECT_NAME}
-)
+  OPTIONAL)
 
-# Allows other packages to find and link to the YoloV8_TRT and tensorrt_cpp_api libraries
 ament_export_include_directories(include)
-ament_export_libraries(YOLOV8_TRT tensorrt_cpp_api yolov8_interfaces)
+ament_export_libraries(YoloV8_TRT tensorrt_cpp_api)
 
 ament_package()

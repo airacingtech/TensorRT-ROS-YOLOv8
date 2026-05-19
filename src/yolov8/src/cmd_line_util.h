@@ -5,22 +5,23 @@
 inline void showHelp(char* argv[]) {
     std::cout << "Usage: " << argv[0] << " [OPTIONS]" << std::endl << std::endl;
 
-    std::cout << "Options:" << std::endl;
-    std::cout << "--model <string>                  Path to the ONNX model. (Mandatory)" << std::endl;
-    std::cout << "--input <string || int>           Input source for detection. Accepts a path to an image file. For video detection, must be path to video source, or video index. (Mandatory)" << std::endl;
-    std::cout << "--precision <string>              Precision to be used for inference. Options include FP32, FP16, and INT8 (Default: FP16)" << std::endl;
-    std::cout << "--calibration-data <string>       Path to calibration data. (Mandatory if precision is INT8)" << std::endl;
-    std::cout << "--prob-threshold <float>          Sets the probability threshold for object detection. Objects with confidence scores lower than this value will be ignored. (Default: 0.25)" << std::endl;
-    std::cout << "--nms-threshold <float>           Sets the Non-Maximum Suppression (NMS) threshold. NMS is used to eliminate duplicate and overlapping detections. (Default: 0.65)" << std::endl;
-    std::cout << "--top-k <int>                     Sets the maximum number of top-scoring objects to be displayed by the detector. (Default: 100)" << std::endl;
-    std::cout << "--seg-channels <int>              Sets the number of segmentation channels used for object segmentation. (Default: 32)" << std::endl;
-    std::cout << "--seg-h <int>                     Sets the height of the segmentation mask. (Default: 160)" << std::endl;
-    std::cout << "--seg-w <int>                     Sets the width of the segmentation mask. (Default: 160)" << std::endl;
-    std::cout << "--seg-threshold <float>           Sets the segmentation threshold for object segmentation. This value determines the sensitivity of the segmentation mask generation. (Default: 0.5)" << std::endl;
-    std::cout << "--class-names <string list>       Sets the names of object classes to be recognized by the detector. Provide the class names separated by spaces. (Default: COCO class names)" << std::endl << std::endl;
+    std::cout << "Options:\n"
+              << "  --model <path>              Path to the ONNX model (required)\n"
+              << "  --precision <FP32|FP16|INT8> Inference precision (default: FP16)\n"
+              << "  --calibration-data <path>   Calibration directory (required if precision=INT8)\n"
+              << "  --prob-threshold <float>    Confidence filter (default: 0.25)\n"
+              << "  --nms-threshold <float>     NMS IoU threshold (default: 0.65)\n"
+              << "  --top-k <int>               Max detections to return (default: 100)\n"
+              << "  --seg-channels <int>        Segmentation channels (default: 32)\n"
+              << "  --seg-h <int>               Segmentation mask height (default: 160)\n"
+              << "  --seg-w <int>               Segmentation mask width (default: 160)\n"
+              << "  --seg-threshold <float>     Segmentation threshold (default: 0.5)\n"
+              << "  --class-names <str ...>     Class names matching the model output\n"
+              << std::endl;
 
-    std::cout << "Example usage:" << std::endl;
-    std::cout << argv[0] << " --model model.onnx --input image.png --precision FP16 --calibration-data /data/coco/validation/ --prob-threshold 0.3 --nms-threshold 0.5 --top-k 50 --seg-channels 64 --seg-h 192 --seg-w 192 --seg-threshold 0.4 --class-names cat dog car person" << std::endl;
+    std::cout << "Example:\n  " << argv[0]
+              << " --model model.onnx --precision FP16 --prob-threshold 0.3 --class-names car"
+              << std::endl;
 }
 
 inline bool tryGetNextArgument(int argc, char* argv[], int& currentIndex, std::string& value, std::string flag, bool printErrors = true) {

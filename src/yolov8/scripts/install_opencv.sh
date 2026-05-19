@@ -1,136 +1,95 @@
-# Description: This script downloads, builds, and installs OpenCV with CUDA support system wide.
-# It also updates the ldconfig cache to include the newly installed OpenCV library.
+#!/usr/bin/env bash
+# Downloads, builds, and installs OpenCV (with the contrib modules) with CUDA support, system-wide.
+# Refreshes the ldconfig cache afterwards.
+# Usage: ./install_opencv.sh <OPENCV_VERSION> <CUDA_ARCH_BIN>
+set -euo pipefail
 
-# Check if correct number of arguments is provided
-if [ $# -ne 2 ]; then
-    echo "================================================================================"
-    echo "Script requires 2 arguments, but $# were provided"
-    echo "Usage: $0 <OpenCV_Version> <CUDA_ARCH_BIN>"
-    echo ""
-    echo "Args:"
-    echo "  OpenCV_Version: Version of OpenCV to build and install (i.e. 4.8.0)"
-    echo "  CUDA_ARCH_BIN: The architecture of GPU being built for. Look for your GPU's"
-    echo "      \"Compute Capability\" on https://developer.nvidia.com/cuda-gpus (i.e. 8.9)"
-    echo "================================================================================"
+if [ "$#" -ne 2 ]; then
+    echo "Usage: $0 <OPENCV_VERSION> <CUDA_ARCH_BIN>"
+    echo "  OPENCV_VERSION  e.g. 4.8.0"
+    echo "  CUDA_ARCH_BIN   Compute capability for your GPU (https://developer.nvidia.com/cuda-gpus), e.g. 8.9"
     exit 1
 fi
 
-# Set variables from user input
-# Version of OpenCV to build (i.e. 4.8.0)
-OPENCV_VERSION=$1
-# Version of CUDA_ARCH_BIN your GPU supports as per "Compute Capability" on
-# https://developer.nvidia.com/cuda-gpus
-CUDA_ARCH_BIN=$2
+OPENCV_VERSION="$1"
+CUDA_ARCH_BIN="$2"
+INSTALL_LOCATION="/usr/local"
 
-# Install OpenCV system wide
-INSTALL_LOCATION=/usr/local
+CURR_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
+cd "${CURR_SCRIPT_DIR}"
 
-# Enter the directory where this script is located
-CURR_SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
-cd ${CURR_SCRIPT_DIR}
+mkdir -p opencv_build_files
+cd opencv_build_files
 
-# Create a directory to store the downloaded files
-mkdir -p opencv_build_files && cd opencv_build_files
+echo "================================================================================"
+echo "WARNING: Building OpenCV ${OPENCV_VERSION} with CUDA will take a long time and"
+echo "         install OpenCV system-wide. It may conflict with existing OpenCV installs."
+echo "================================================================================"
 
-echo "\
-================================================================================
-WARNING: This script to install OpenCV $OPENCV_VERSION with CUDA may take a
-while to run and use a significant amount of your CPU
-================================================================================
-"
+# Fetch the main OpenCV repo
+if [ ! -e "${OPENCV_VERSION}.zip" ]; then
+    wget "https://github.com/opencv/opencv/archive/refs/tags/${OPENCV_VERSION}.zip"
+fi
+if [ ! -d "opencv-${OPENCV_VERSION}" ]; then
+    unzip "${OPENCV_VERSION}.zip"
+fi
 
-# Check if file exists, if not download them and unzip them
-test -e ${OPENCV_VERSION}.zip || wget https://github.com/opencv/opencv/archive/refs/tags/${OPENCV_VERSION}.zip
-test -e opencv-${OPENCV_VERSION} || unzip ${OPENCV_VERSION}.zip
-test -e opencv_extra_${OPENCV_VERSION}.zip || wget -O opencv_extra_${OPENCV_VERSION}.zip https://github.com/opencv/opencv_contrib/archive/refs/tags/${OPENCV_VERSION}.zip
-test -e opencv_contrib-${OPENCV_VERSION} || unzip opencv_extra_${OPENCV_VERSION}.zip
+# Fetch the contrib repo
+if [ ! -e "opencv_extra_${OPENCV_VERSION}.zip" ]; then
+    wget -O "opencv_extra_${OPENCV_VERSION}.zip" "https://github.com/opencv/opencv_contrib/archive/refs/tags/${OPENCV_VERSION}.zip"
+fi
+if [ ! -d "opencv_contrib-${OPENCV_VERSION}" ]; then
+    unzip "opencv_extra_${OPENCV_VERSION}.zip"
+fi
 
-# Create build folder
-cd opencv-${OPENCV_VERSION}
+cd "opencv-${OPENCV_VERSION}"
 if [ -d "build" ]; then
-    echo "\
-================================================================================
-Deleting existing OpenCV $OPENCV_VERSION build folder and creating new one
-================================================================================
-"
+    echo "Removing previous build directory..."
     sudo rm -rf build
 fi
-mkdir build && cd build
+mkdir build
+cd build
 
-# Build OpenCV with CUDA in build folder
-echo "\
-================================================================================
-Building OpenCV $OPENCV_VERSION with CUDA
-================================================================================
-"
+echo "Configuring OpenCV ${OPENCV_VERSION} (CUDA arch ${CUDA_ARCH_BIN})..."
 cmake -D CMAKE_BUILD_TYPE=RELEASE \
--D CMAKE_INSTALL_PREFIX=${INSTALL_LOCATION} \
--D WITH_TBB=ON \
--D ENABLE_FAST_MATH=1 \
--D CUDA_FAST_MATH=1 \
--D WITH_CUBLAS=1 \
--D WITH_CUDA=ON \
--D BUILD_opencv_cudacodec=ON \
--D WITH_CUDNN=ON \
--D OPENCV_DNN_CUDA=ON \
--D WITH_QT=ON \
--D WITH_OPENGL=ON \
--D BUILD_opencv_apps=OFF \
--D BUILD_opencv_python2=OFF \
--D OPENCV_GENERATE_PKGCONFIG=ON \
--D OPENCV_PC_FILE_NAME=opencv.pc \
--D OPENCV_ENABLE_NONFREE=ON \
--D OPENCV_EXTRA_MODULES_PATH=../../opencv_contrib-${OPENCV_VERSION}/modules \
--D INSTALL_PYTHON_EXAMPLES=OFF \
--D INSTALL_C_EXAMPLES=OFF \
--D BUILD_EXAMPLES=OFF \
--D CUDA_ARCH_BIN=${CUDA_ARCH_BIN} \
--D WITH_FFMPEG=ON \
--D CUDNN_INCLUDE_DIR=/usr/include/ \
--D CUDNN_LIBRARY=/usr/lib/x86_64-linux-gnu/libcudnn.so \
--D WITH_GTK=ON \
-..
+      -D CMAKE_INSTALL_PREFIX="${INSTALL_LOCATION}" \
+      -D WITH_TBB=ON \
+      -D ENABLE_FAST_MATH=1 \
+      -D CUDA_FAST_MATH=1 \
+      -D WITH_CUBLAS=1 \
+      -D WITH_CUDA=ON \
+      -D BUILD_opencv_cudacodec=ON \
+      -D WITH_CUDNN=ON \
+      -D OPENCV_DNN_CUDA=ON \
+      -D WITH_QT=ON \
+      -D WITH_OPENGL=ON \
+      -D BUILD_opencv_apps=OFF \
+      -D BUILD_opencv_python2=OFF \
+      -D OPENCV_GENERATE_PKGCONFIG=ON \
+      -D OPENCV_PC_FILE_NAME=opencv.pc \
+      -D OPENCV_ENABLE_NONFREE=ON \
+      -D OPENCV_EXTRA_MODULES_PATH="../../opencv_contrib-${OPENCV_VERSION}/modules" \
+      -D INSTALL_PYTHON_EXAMPLES=OFF \
+      -D INSTALL_C_EXAMPLES=OFF \
+      -D BUILD_EXAMPLES=OFF \
+      -D CUDA_ARCH_BIN="${CUDA_ARCH_BIN}" \
+      -D WITH_FFMPEG=ON \
+      -D CUDNN_INCLUDE_DIR=/usr/include/ \
+      -D CUDNN_LIBRARY=/usr/lib/x86_64-linux-gnu/libcudnn.so \
+      -D WITH_GTK=ON \
+      ..
 
-# Compile using about half the available cores
-num_cores=$(($(nproc) / 2))
-# If the number of cores is less than 1, set it to 1
-if [ $num_cores -lt 1 ]; then
+num_cores=$(( $(nproc) / 2 ))
+if [ "${num_cores}" -lt 1 ]; then
     num_cores=1
 fi
-echo "\
+echo "Compiling with ${num_cores} of $(nproc) cores..."
+make -j "${num_cores}"
 
-================================================================================
-Compiling OpenCV $OPENCV_VERSION with CUDA using $num_cores out of the $(nproc) cores available
-================================================================================
-"
-make -j $num_cores
+echo "Installing OpenCV ${OPENCV_VERSION} to ${INSTALL_LOCATION}..."
+sudo make -j "${num_cores}" install
 
-# Persist the VERSION variable into a file
-# Delete the file if it already exists
-# rm -f opencv_version.sh
-# echo "\
-# # This file is auto-generated by the build_opencv.sh script.
-# # It contains the version of OpenCV that was last built by the script.
-# # Do not modify this file manually.
-# export "OPENCV_VERSION=${OPENCV_VERSION}"\
-# " >> opencv_version.sh
-
-# Installs system wide using 8 cores
-echo "\
-================================================================================
-Installing OpenCV $OPENCV_VERSION with CUDA system wide in $INSTALL_LOCATION
-================================================================================
-"
-sudo make -j $num_cores install
-
-# Add the OpenCV library to the ldconfig cache
-echo "\
-================================================================================
-Adding OpenCV $OPENCV_VERSION with CUDA to the ldconfig cache
-================================================================================
-"
+echo "Refreshing ldconfig cache..."
 sudo ldconfig -v
 
-# To undo the install (in the case you are causing conflicts with another version of OpenCV), run
-# $ sudo make uninstall
-# in the build folder (where you ran the make install command)
+echo "Done. To undo, run uninstall_opencv.sh ${OPENCV_VERSION}."

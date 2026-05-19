@@ -3,17 +3,16 @@
 <package format="3">
   <name>yolov8_interfaces</name>
   <version>0.0.0</version>
-  <description>A package to define msg types for the yolov8 package</description>
+  <description>Custom message definitions used by the yolov8 segmentation node.</description>
   <maintainer email="64391920+ekberndt@users.noreply.github.com">Eric Berndt</maintainer>
   <license>MIT</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>rosidl_default_generators</buildtool_depend>
 
   <depend>std_msgs</depend>
   <depend>sensor_msgs</depend>
-  <depend>rclcpp</depend>
 
-  <buildtool_depend>rosidl_default_generators</buildtool_depend>
   <exec_depend>rosidl_default_runtime</exec_depend>
   <member_of_group>rosidl_interface_packages</member_of_group>
 
