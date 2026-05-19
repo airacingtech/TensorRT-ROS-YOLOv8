@@ -30,7 +30,12 @@ endif()
 include(cmake/ccache.cmake)
 
 set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Ofast -DNDEBUG -Wno-deprecated-declarations")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wno-deprecated-declarations")
+# Aggressive optimization for non-Debug builds. Skipped under Debug so `make build-debug` keeps
+# assertions enabled and produces useful stack traces.
+if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Ofast -DNDEBUG")
+endif()
 
 # TensorRT inference engine (finds TensorRT/CUDA/OpenCV itself)
 add_subdirectory(libs/tensorrt-cpp-api)

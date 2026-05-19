@@ -14,6 +14,7 @@ help:
 	@echo "  install-opencv-cuda    Build & install OpenCV with CUDA system-wide"
 	@echo "                         (OPENCV_VERSION=<x.y.z> CUDA_BIN_ARCH=<x.y>)"
 	@echo "  uninstall-opencv-cuda  Uninstall the OpenCV build produced above"
+	@echo "                         (OPENCV_VERSION=<x.y.z>)"
 	@echo "  copy-engine            Copy built engines out of install/ to ./"
 	@echo "  return-engine          Restore an engine into install/ (ENGINE=<file>)"
 
@@ -40,7 +41,10 @@ install-opencv-cuda:
 
 .PHONY: uninstall-opencv-cuda
 uninstall-opencv-cuda:
-	source ./src/yolov8/scripts/uninstall_opencv.sh
+	@if [ -z "$(OPENCV_VERSION)" ]; then \
+		echo "OPENCV_VERSION must be set (the version originally installed)."; exit 1; \
+	fi
+	source ./src/yolov8/scripts/uninstall_opencv.sh $(OPENCV_VERSION)
 
 # Copy generated engine files out of install/ so they survive a `make clean`.
 .PHONY: copy-engine

@@ -71,10 +71,10 @@ make install-opencv-cuda OPENCV_VERSION=4.8.0 CUDA_BIN_ARCH=<your-compute-capabi
 
 Find your GPU's compute capability at https://developer.nvidia.com/cuda-gpus. The build takes a while.
 
-To revert:
+To revert (pass the version that was originally installed):
 
 ```bash
-make uninstall-opencv-cuda
+make uninstall-opencv-cuda OPENCV_VERSION=4.8.0
 ```
 
 ## Building

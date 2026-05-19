@@ -230,6 +230,7 @@ cython_debug/
 *.pt
 *.pth
 
-# Enironment Files
+# Environment Files
 # ========================
 *.env
+!example.env
