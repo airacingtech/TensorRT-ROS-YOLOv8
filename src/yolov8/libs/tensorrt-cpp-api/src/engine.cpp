@@ -225,11 +225,14 @@ bool Engine::build(std::string onnxModelPath, const std::array<float, 3>& subVal
 }
 
 Engine::~Engine() {
-    // Free the GPU memory
+    // Free the GPU memory. Log instead of throwing so a failure during teardown doesn't trigger
+    // std::terminate from a destructor.
     for (auto & buffer : m_buffers) {
-        checkCudaErrorCode(cudaFree(buffer));
+        const cudaError_t code = cudaFree(buffer);
+        if (code != cudaSuccess) {
+            std::cerr << "Engine::~Engine cudaFree failed: " << cudaGetErrorString(code) << std::endl;
+        }
     }
-
     m_buffers.clear();
 }
 
@@ -547,29 +550,6 @@ cv::cuda::GpuMat Engine::resizeKeepAspectRatioPadRightBottom(const cv::cuda::Gpu
     return out;
 }
 
-/**
- * Removes the batch dimention from the output of the model. Should only be used when the model has a batch size of 1.
- * 
- * @param input The input feature vector to be moved.
- * @param output The output vector to store the feature vector.
- * @throws std::logic_error if the input feature vector has incorrect dimensions.
- */
-void Engine::transformOutput(std::vector<std::vector<std::vector<float>>>& input, std::vector<std::vector<float>>& output) {
-    if (input.size() != 1) {
-        throw std::logic_error("The feature vector has incorrect dimensions!");
-    }
-
-    output = std::move(input[0]);
-}
-
-void Engine::transformOutput(std::vector<std::vector<std::vector<float>>>& input, std::vector<float>& output) {
-    if (input.size() != 1 || input[0].size() != 1) {
-        throw std::logic_error("The feature vector has incorrect dimensions!");
-    }
-
-    output = std::move(input[0][0]);
-}
-
 Int8EntropyCalibrator2::Int8EntropyCalibrator2(int32_t batchSize, int32_t inputW, int32_t inputH,
                                                const std::string &calibDataDirPath,
                                                const std::string &calibTableName,
@@ -641,7 +621,7 @@ bool Int8EntropyCalibrator2::getBatch(void **bindings, const char **names, int32
     }
 
     // Convert the batch from NHWC to NCHW
-    // ALso apply normalization, scaling, and mean subtraction
+    // Also apply normalization, scaling, and mean subtraction
     auto mfloat = Engine::blobFromGpuMats(inputImgs, m_subVals, m_divVals, m_normalize);
     auto *dataPointer = mfloat.ptr<void>();
 
@@ -675,6 +655,11 @@ void Int8EntropyCalibrator2::writeCalibrationCache(const void *ptr, std::size_t 
 }
 
 Int8EntropyCalibrator2::~Int8EntropyCalibrator2() {
-    checkCudaErrorCode(cudaFree(m_deviceInput));
-};
+    // Log instead of throwing — destructors must not throw.
+    const cudaError_t code = cudaFree(m_deviceInput);
+    if (code != cudaSuccess) {
+        std::cerr << "Int8EntropyCalibrator2::~Int8EntropyCalibrator2 cudaFree failed: "
+                  << cudaGetErrorString(code) << std::endl;
+    }
+}
 

@@ -2,9 +2,30 @@
 import os
 
 from ament_index_python.packages import get_package_share_directory
-from environs import Env
 from launch import LaunchDescription
 from launch_ros.actions import Node
+
+
+def _load_env_file(path):
+    """Parse a simple KEY=value env file. Strips matching surrounding quotes and ignores comments."""
+    values = {}
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#') or '=' not in line:
+                continue
+            key, _, value = line.partition('=')
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+                value = value[1:-1]
+            values[key.strip()] = value
+    return values
+
+
+def _as_bool(value):
+    if value.lower() not in ('true', 'false'):
+        raise ValueError(f'Expected true/false, got {value!r}')
+    return value.lower() == 'true'
 
 
 def generate_launch_description():
@@ -18,25 +39,32 @@ def generate_launch_description():
             'the workspace root and rebuild the yolov8 package.'
         )
 
-    env = Env()
-    env.read_env(env_file_path)
+    env = _load_env_file(env_file_path)
 
-    model_path = os.path.join(models_dir, env('ONNX_MODEL'))
-    camera_topics = [t.strip() for t in env.str('CAMERA_TOPICS').split(',') if t.strip()]
-    camera_topic_suffix = env('CAMERA_TOPIC_SUFFIX')
-    camera_buffer_hz = env.float('CAMERA_BUFFER_HZ')
-    visualize_masks = env.bool('VISUALIZE_MASKS')
-    enable_one_channel_mask = env.bool('ENABLE_ONE_CHANNEL_MASK')
-    visualize_one_channel_mask = env.bool('VISUALIZE_ONE_CHANNEL_MASK')
-    precision = env('PRECISION')
-    calibration_data_directory = env('CALIBRATION_DATA_DIRECTORY')
-    probability_threshold = env.float('PROBABILITY_THRESHOLD')
-    nms_threshold = env.float('NMS_THRESHOLD')
-    top_k = env.int('TOP_K')
-    seg_channels = env.int('SEG_CHANNELS')
-    seg_h = env.int('SEG_H')
-    seg_w = env.int('SEG_W')
-    segmentation_threshold = env.float('SEGMENTATION_THRESHOLD')
+    model_path = os.path.join(models_dir, env['ONNX_MODEL'])
+    camera_topics = [t.strip() for t in env['CAMERA_TOPICS'].split(',') if t.strip()]
+    camera_topic_suffix = env['CAMERA_TOPIC_SUFFIX']
+    camera_buffer_hz = float(env['CAMERA_BUFFER_HZ'])
+    visualize_masks = _as_bool(env['VISUALIZE_MASKS'])
+    enable_one_channel_mask = _as_bool(env['ENABLE_ONE_CHANNEL_MASK'])
+    visualize_one_channel_mask = _as_bool(env['VISUALIZE_ONE_CHANNEL_MASK'])
+    precision = env['PRECISION']
+    calibration_data_directory = env.get('CALIBRATION_DATA_DIRECTORY', '')
+    probability_threshold = float(env['PROBABILITY_THRESHOLD'])
+    nms_threshold = float(env['NMS_THRESHOLD'])
+    top_k = int(env['TOP_K'])
+    seg_channels = int(env['SEG_CHANNELS'])
+    seg_h = int(env['SEG_H'])
+    seg_w = int(env['SEG_W'])
+    segmentation_threshold = float(env['SEGMENTATION_THRESHOLD'])
+    batch_size = int(env['BATCH_SIZE'])
+    class_names = [c.strip() for c in env['CLASS_NAMES'].split(',') if c.strip()]
+
+    if len(camera_topics) != batch_size:
+        raise ValueError(
+            f'BATCH_SIZE ({batch_size}) must equal the number of CAMERA_TOPICS '
+            f'({len(camera_topics)}). Update yolov8.env so they match.'
+        )
 
     cli_args = [
         '--model', model_path,
@@ -48,9 +76,12 @@ def generate_launch_description():
         '--seg-h', str(seg_h),
         '--seg-w', str(seg_w),
         '--seg-threshold', str(segmentation_threshold),
+        '--batch-size', str(batch_size),
     ]
     if calibration_data_directory:
         cli_args.extend(['--calibration-data', calibration_data_directory])
+    # Keep --class-names last so its variadic argument list isn't split by another flag.
+    cli_args.extend(['--class-names', *class_names])
 
     return LaunchDescription([
         Node(

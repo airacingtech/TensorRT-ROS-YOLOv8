@@ -47,6 +47,7 @@ uninstall-opencv-cuda:
 	source ./src/yolov8/scripts/uninstall_opencv.sh $(OPENCV_VERSION)
 
 # Copy generated engine files out of install/ so they survive a `make clean`.
+# Fails (intentionally, via cp's exit code) if there are no engines to copy.
 .PHONY: copy-engine
 copy-engine:
 	cp install/yolov8/share/yolov8/models/engines/* .

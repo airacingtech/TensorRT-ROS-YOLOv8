@@ -1,10 +1,16 @@
 cmake_minimum_required(VERSION 3.8)
 project(tensorrt_cpp_api)
 
+# Vendored from https://github.com/cyrusbehr/YOLOv8-TensorRT-CPP (MIT, see ./LICENSE).
+# Kept close to upstream to make future syncs tractable; structural refactors are out of scope
+# for this project. The wrapper in ../../src/yolov8.{h,cpp} drives this library from the ROS node.
+
 # Speed up rebuilds with ccache when available
 include(cmake/ccache.cmake)
 
 set(CMAKE_CXX_STANDARD 17)
+# -Wno-deprecated-declarations silences benign deprecations from the TensorRT/OpenCV headers.
+# -Ofast: deliberate for inference workloads; see the comment in ../../CMakeLists.txt.
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wno-deprecated-declarations")
 if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Ofast -DNDEBUG")

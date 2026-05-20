@@ -6,7 +6,7 @@
 #include "sensor_msgs/msg/image.hpp"
 #include "cv_bridge/cv_bridge.hpp"
 
-// Custom ROS2 message types where the names of the hpp files are snake_case
+// Generated ROS 2 message headers (rosidl produces snake_case file names).
 #include "yolov8_interfaces/msg/point2_d.hpp"
 #include "yolov8_interfaces/msg/yolov8_detections.hpp"
 #include "yolov8_interfaces/msg/yolov8_b_box.hpp"
@@ -44,7 +44,7 @@ public:
         model_input_height_ = yoloV8_.getInputHeight();
         model_input_width_ = yoloV8_.getInputWidth();
 
-        // Timer to flush the buffer if not all cameras publish within one period.
+        // Timer flushes the buffer to inference if not all topics produce a frame within one period.
         const auto buffer_period = std::chrono::duration<double>(1.0 / camera_buffer_hz_);
         buffer_timer_ = rclcpp::create_wall_timer(
             buffer_period,
@@ -54,6 +54,10 @@ public:
             this->get_node_timers_interface().get());
 
         RCLCPP_INFO(this->get_logger(), "Subscribing to %zu camera topic(s):", camera_topics_.size());
+        // best_effort + volatile durability matches typical camera publishers; intra-process
+        // comm avoids a serialize/deserialize round-trip when the camera driver runs in the same
+        // process. None of these are subscriber-side requirements — they're paired with the
+        // publishers we expect (e.g. vimba_ros2).
         rclcpp::QoS qos_profile = rclcpp::QoS(rclcpp::QoSInitialization(RMW_QOS_POLICY_HISTORY_KEEP_LAST, 10));
         qos_profile.best_effort();
         qos_profile.durability_volatile();
@@ -72,20 +76,24 @@ public:
             subscriptions_.push_back(subscription);
             detection_publishers_[topic] = this->create_publisher<yolov8_interfaces::msg::Yolov8Detections>(
                 "/yolov8" + topic + "/detections", qos_profile);
-            image_publishers_[topic] = this->create_publisher<sensor_msgs::msg::Image>(
-                "/yolov8" + topic + "/image", qos_profile);
-            one_channel_mask_publishers_[topic] = this->create_publisher<sensor_msgs::msg::Image>(
-                "/yolov8" + topic + "/seg_mask_one_channel", qos_profile);
+            if (visualize_masks_) {
+                image_publishers_[topic] = this->create_publisher<sensor_msgs::msg::Image>(
+                    "/yolov8" + topic + "/image", qos_profile);
+            }
+            if (enable_one_channel_mask_ && visualize_one_channel_mask_) {
+                one_channel_mask_publishers_[topic] = this->create_publisher<sensor_msgs::msg::Image>(
+                    "/yolov8" + topic + "/seg_mask_one_channel", qos_profile);
+            }
         }
     }
 
 private:
-    /*
-     * Push a freshly arrived image into the current buffer. Older images on the same topic are
-     * discarded because the network is the throughput bottleneck. If every topic has produced an
-     * image, we drain the buffer immediately instead of waiting for the timer.
-     */
-    void addToBufferCallback(const sensor_msgs::msg::Image::SharedPtr &image_msg, const std::string& topic) {
+    using ImageBuffer = std::map<std::string, sensor_msgs::msg::Image::SharedPtr>;
+
+    // Push a freshly arrived image into the current buffer. Older images on the same topic are
+    // discarded because the network is the throughput bottleneck. If every topic has produced an
+    // image, we drain the buffer immediately instead of waiting for the timer.
+    void addToBufferCallback(const sensor_msgs::msg::Image::SharedPtr& image_msg, const std::string& topic) {
         std::unique_lock<std::mutex> lock(buffer_mutex_);
         current_buffer_[topic] = image_msg;
         if (current_buffer_.size() == camera_topics_.size()) {
@@ -95,15 +103,17 @@ private:
     }
 
     void batchBufferCallback() {
-        // Swap the current buffer into a processing buffer so the subscribers can keep filling.
-        std::unique_lock<std::mutex> lock(buffer_mutex_);
-        std::swap(current_buffer_, processing_buffer_);
-        current_buffer_.clear();
-        lock.unlock();
+        // Move the current buffer into a local processing buffer so the subscribers can keep
+        // filling and so we don't need a lock across the (slow) inference step.
+        ImageBuffer processing_buffer;
+        {
+            std::unique_lock<std::mutex> lock(buffer_mutex_);
+            processing_buffer.swap(current_buffer_);
+        }
 
         buffer_timer_->reset();
 
-        if (processing_buffer_.empty()) {
+        if (processing_buffer.empty()) {
             return;
         }
 
@@ -113,10 +123,14 @@ private:
         std::vector<bool> topic_present(camera_topics_.size(), false);
         const int input_h = model_input_height_;
         const int input_w = model_input_width_;
+        // For any camera that did not produce a frame this window we fill the batch slot with a
+        // zero image at the engine's input size, so the model still sees a valid batch. The
+        // corresponding `topic_present` entry stays false, so we never publish detections for
+        // that slot — the fill image is purely a shape placeholder.
         for (size_t i = 0; i < camera_topics_.size(); ++i) {
             const std::string& topic = camera_topics_[i];
-            auto it = processing_buffer_.find(topic);
-            if (it == processing_buffer_.end()) {
+            auto it = processing_buffer.find(topic);
+            if (it == processing_buffer.end()) {
                 images.emplace_back(cv::Mat::zeros(cv::Size(input_w, input_h), CV_8UC3));
                 continue;
             }
@@ -137,7 +151,8 @@ private:
 
         std::vector<std::vector<Object>> objects = yoloV8_.detectObjects(images);
 
-        // Log detections per camera in user-defined order.
+        // Per-batch detection log lives at INFO so it is visible by default during a race; per
+        // detection details go to DEBUG to keep the steady-state log volume manageable.
         for (size_t i = 0; i < objects.size(); ++i) {
             if (!topic_present[i] || objects[i].empty()) {
                 continue;
@@ -150,27 +165,25 @@ private:
             }
         }
 
-        publishDetections(images, objects, topic_present);
+        publishDetections(images, objects, topic_present, processing_buffer);
     }
 
-    /*
-     * Convert detector outputs into ROS messages and publish them per topic.
-     */
     void publishDetections(std::vector<cv::Mat>& images,
                            std::vector<std::vector<Object>>& objects,
-                           const std::vector<bool>& topic_present) {
+                           const std::vector<bool>& topic_present,
+                           const ImageBuffer& processing_buffer) {
         for (size_t i = 0; i < camera_topics_.size(); ++i) {
             if (!topic_present[i]) {
                 continue;
             }
             const std::string& topic = camera_topics_[i];
-            const auto image_msg = processing_buffer_[topic];
+            const auto image_msg = processing_buffer.at(topic);
 
             yolov8_interfaces::msg::Yolov8Detections detectionMsg;
             detectionMsg.header = image_msg->header;
 
             if (enable_one_channel_mask_) {
-                publishOneChannelMask(objects[i], visualize_one_channel_mask_, image_msg, detectionMsg, topic);
+                publishOneChannelMask(objects[i], image_msg, detectionMsg, topic);
             }
             if (visualize_masks_) {
                 visualizeMask(objects[i], images[i], topic, image_msg);
@@ -187,15 +200,14 @@ private:
         yoloV8_.drawObjectLabels(image, objects);
 
         sensor_msgs::msg::Image displayImageMsg;
-        cv_bridge::CvImagePtr cv_image = std::make_shared<cv_bridge::CvImage>(
-            image_msg->header, "bgr8", image);
-        cv_image->toImageMsg(displayImageMsg);
+        cv_bridge::CvImage cv_image(image_msg->header, "bgr8", image);
+        cv_image.toImageMsg(displayImageMsg);
         image_publishers_[topic]->publish(displayImageMsg);
     }
 
-    void publishOneChannelMask(std::vector<Object>& objects, bool visualize_one_channel_mask,
+    void publishOneChannelMask(std::vector<Object>& objects,
                                const sensor_msgs::msg::Image::ConstSharedPtr& image_msg,
-                               yolov8_interfaces::msg::Yolov8Detections &detectionMsg,
+                               yolov8_interfaces::msg::Yolov8Detections& detectionMsg,
                                const std::string& topic) {
         cv::Mat oneChannelMask;
         yoloV8_.getOneChannelSegmentationMask(objects, oneChannelMask,
@@ -208,7 +220,7 @@ private:
             return;
         }
 
-        if (visualize_one_channel_mask) {
+        if (visualize_one_channel_mask_) {
             cv::Mat oneChannelMaskRGB8 = visualizeOneChannelMask(oneChannelMask);
             if (oneChannelMaskRGB8.empty()) {
                 return;
@@ -227,10 +239,18 @@ private:
         // Start at 1: zero is reserved for "background" in the one-channel mask encoding.
         int index = 1;
         for (const auto& object : objects) {
-            yolov8_interfaces::msg::Yolov8BBox bBoxMsg;
+            if (object.label + 1 > yoloV8_.getNumClasses()) {
+                RCLCPP_ERROR(this->get_logger(),
+                             "Label %d has no matching class name. Update CLASS_NAMES in yolov8.env.",
+                             object.label);
+                continue;
+            }
+
             yolov8_interfaces::msg::Point2D point2DMsg;
             point2DMsg.x = object.rect.x;
             point2DMsg.y = object.rect.y;
+
+            yolov8_interfaces::msg::Yolov8BBox bBoxMsg;
             bBoxMsg.top_left = point2DMsg;
             bBoxMsg.rect_width = object.rect.width;
             bBoxMsg.rect_height = object.rect.height;
@@ -238,12 +258,6 @@ private:
             detectionMsg.indexes.push_back(index);
             detectionMsg.labels.push_back(object.label);
             detectionMsg.probabilities.push_back(object.probability);
-            if (object.label + 1 > yoloV8_.getNumClasses()) {
-                RCLCPP_ERROR(this->get_logger(),
-                             "Label %d has no matching class name. Update yolov8.env CLASS_NAMES.",
-                             object.label);
-                continue;
-            }
             detectionMsg.class_names.push_back(yoloV8_.getClassName(object.label));
             detectionMsg.bounding_boxes.push_back(bBoxMsg);
             index++;
@@ -279,8 +293,7 @@ private:
     std::map<std::string, rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr> image_publishers_;
     std::map<std::string, rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr> one_channel_mask_publishers_;
     rclcpp::TimerBase::SharedPtr buffer_timer_;
-    std::map<std::string, sensor_msgs::msg::Image::SharedPtr> current_buffer_;
-    std::map<std::string, sensor_msgs::msg::Image::SharedPtr> processing_buffer_;
+    ImageBuffer current_buffer_;
     std::mutex buffer_mutex_;
 
     std::vector<rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr> subscriptions_;

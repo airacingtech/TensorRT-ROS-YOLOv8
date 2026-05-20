@@ -1,5 +1,10 @@
 #pragma once
 
+// Vendored from https://github.com/cyrusbehr/YOLOv8-TensorRT-CPP (MIT, see ./LICENSE).
+// This file is intentionally kept close to upstream so future syncs are tractable. Bug fixes
+// and small cleanups are applied; structural refactors are not. Logging here uses std::cout/cerr
+// because the library is designed to be usable outside ROS.
+
 #include <fstream>
 #include <chrono>
 #include <iostream>
@@ -7,7 +12,7 @@
 #include <opencv2/core/cuda.hpp>
 #include <opencv2/cudawarping.hpp>
 #include <opencv2/cudaarithm.hpp>
-// Suppress warnings from TensorRT headers
+// Suppress -Wunused-parameter inside the TensorRT public headers (out of our control).
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
 #include "NvInfer.h"
@@ -32,7 +37,8 @@ namespace Util {
     std::vector<std::string> getFilesInDirectory(const std::string& dirPath);
 }
 
-// Monotonic stopwatch used by the benchmark executable.
+// Monotonic stopwatch. Only the standalone benchmark executable (src/main.cpp) uses it; it is
+// kept in the public header because the library is published for general (non-ROS) use.
 template <typename Clock = std::chrono::high_resolution_clock>
 class Stopwatch {
     typename Clock::time_point start_point;
@@ -54,7 +60,7 @@ using preciseStopwatch = Stopwatch<>;
 enum class Precision {
     // Full precision floating point value
     FP32,
-    // Half prevision floating point value
+    // Half precision floating point value
     FP16,
     // Int8 quantization.
     // Has reduced dynamic range, may result in slight loss in accuracy.
@@ -62,20 +68,17 @@ enum class Precision {
     INT8,
 };
 
-// Options for the network
+// Options for the network. The defaults below are the upstream library defaults; the YoloV8
+// wrapper in this project sets both optBatchSize and maxBatchSize from YoloV8Config::batchSize,
+// so the mismatched defaults here are not used by the ROS node.
 struct Options {
-    // Precision to use for GPU inference.
     Precision precision = Precision::FP16;
     // If INT8 precision is selected, must provide path to calibration dataset directory.
     std::string calibrationDataDirectoryPath;
-    // The batch size to be used when computing calibration data for INT8 inference.
-    // Should be set to as large a batch number as your GPU will support.
+    // Batch size used while computing INT8 calibration data; set as large as the GPU allows.
     int32_t calibrationBatchSize = 128;
-    // The batch size which should be optimized for.
     int32_t optBatchSize = 4;
-    // Maximum allowable batch size
     int32_t maxBatchSize = 6;
-    // GPU device index
     int deviceIndex = 0;
 };
 
@@ -143,14 +146,8 @@ public:
     [[nodiscard]] const std::vector<nvinfer1::Dims>& getOutputDims() const { return m_outputDims; }
     [[nodiscard]] int getBatchSize() const { return batch_size_; }
 
-    // Utility method for transforming triple nested output array into 2D array
-    // Should be used when the output batch size is 1, but there are multiple output feature vectors
-    static void transformOutput(std::vector<std::vector<std::vector<float>>>& input, std::vector<std::vector<float>>& output);
-
-    // Utility method for transforming triple nested output array into single array
-    // Should be used when the output batch size is 1, and there is only a single output feature vector
-    static void transformOutput(std::vector<std::vector<std::vector<float>>>& input, std::vector<float>& output);
-    // Convert NHWC to NCHW and apply scaling and mean subtraction
+    // Converts a batch of NHWC GpuMats into a single NCHW GpuMat blob, applying optional
+    // normalization and mean subtraction in one pass.
     static cv::cuda::GpuMat blobFromGpuMats(const std::vector<cv::cuda::GpuMat>& batchInput, const std::array<float, 3>& subVals, const std::array<float, 3>& divVals, bool normalize);
 private:
     // Converts the engine options into a string

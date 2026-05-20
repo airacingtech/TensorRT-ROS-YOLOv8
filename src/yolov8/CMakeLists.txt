@@ -20,7 +20,12 @@ find_package(yolov8_interfaces REQUIRED)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
-  # Skip copyright/cpplint checks: the project ships under MIT and does not enforce per-file headers.
+  # We skip:
+  #   - copyright: this project ships under a single MIT LICENSE and does not enforce per-file headers.
+  #   - cpplint:   the bundled style differs significantly from Google C++ style and reformatting
+  #                vendored upstream code would defeat the purpose of vendoring.
+  # No unit tests are shipped — the hot path is GPU/TensorRT/OpenCV-with-CUDA coupled and
+  # meaningful tests need the target hardware. See README "Design notes".
   set(ament_cmake_copyright_FOUND TRUE)
   set(ament_cmake_cpplint_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
@@ -30,9 +35,13 @@ endif()
 include(cmake/ccache.cmake)
 
 set(CMAKE_CXX_STANDARD 17)
+# -Wno-deprecated-declarations silences benign deprecations from the TensorRT/OpenCV headers we
+# do not control. Project code itself stays free of deprecated APIs.
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wno-deprecated-declarations")
-# Aggressive optimization for non-Debug builds. Skipped under Debug so `make build-debug` keeps
-# assertions enabled and produces useful stack traces.
+# -Ofast is deliberate: this is a real-time inference workload, the fast-math relaxations are
+# acceptable (we do not rely on strict IEEE NaN/inf semantics on the hot path), and the
+# measured speedup over -O3 is non-trivial. -Ofast is skipped under Debug so `make build-debug`
+# keeps assertions enabled and produces useful stack traces.
 if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Ofast -DNDEBUG")
 endif()

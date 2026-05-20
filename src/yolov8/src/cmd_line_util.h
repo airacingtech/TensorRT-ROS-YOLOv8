@@ -1,4 +1,5 @@
 #pragma once
+#include <filesystem>
 #include <iostream>
 #include "yolov8.h"
 
@@ -16,6 +17,7 @@ inline void showHelp(char* argv[]) {
               << "  --seg-h <int>               Segmentation mask height (default: 160)\n"
               << "  --seg-w <int>               Segmentation mask width (default: 160)\n"
               << "  --seg-threshold <float>     Segmentation threshold (default: 0.5)\n"
+              << "  --batch-size <int>          Engine batch size (default: 4)\n"
               << "  --class-names <str ...>     Class names matching the model output\n"
               << std::endl;
 
@@ -81,7 +83,7 @@ inline std::string parseArguments(int argc, char* argv[], YoloV8Config& config, 
                 if (!tryGetNextArgument(argc, argv, i, nextArgument, flag))
                     return "Error: Unable to get next argument for flag 'model'.";
 
-                if (!doesFileExist(nextArgument)) {
+                if (!Util::doesFileExist(nextArgument)) {
                     return "Error: Unable to find model at path '" + nextArgument + "' for flag '" + flag + "'.";
                 }
 
@@ -160,14 +162,14 @@ inline std::string parseArguments(int argc, char* argv[], YoloV8Config& config, 
 
             else if (flag == "calibration-data") {
                 if (!tryGetNextArgument(argc, argv, i, nextArgument, flag))
-                    return "No path specficied for flag 'calibration-data'.";
+                    return "Error: No path specified for flag 'calibration-data'.";
 
                 if (nextArgument.empty()) {
                     continue;
                 }
 
-                if (!doesFileExist(nextArgument)) {
-                    return "Error: Calibration data at specified path does not exist: " + nextArgument + ".";
+                if (!std::filesystem::is_directory(nextArgument)) {
+                    return "Error: Calibration data directory does not exist or is not a directory: " + nextArgument + ".";
                 }
 
                 config.calibrationDataDirectory = nextArgument;
@@ -195,6 +197,17 @@ inline std::string parseArguments(int argc, char* argv[], YoloV8Config& config, 
                 config.segmentationThreshold = value;
             }
 
+            else if (flag == "batch-size") {
+                if (!tryGetNextArgument(argc, argv, i, nextArgument, flag))
+                    return "Error: Unable to get next argument for flag 'batch-size'.";
+
+                int value;
+                if (!tryParseInt(nextArgument, value, flag))
+                    return "Error: Unable to parse integer for flag 'batch-size'.";
+
+                config.batchSize = value;
+            }
+
             else if (flag == "class-names") {
                 std::vector<std::string> values;
                 while (tryGetNextArgument(argc, argv, i, nextArgument, flag, false)) {
@@ -209,14 +222,9 @@ inline std::string parseArguments(int argc, char* argv[], YoloV8Config& config, 
             }
 
             else if (flag == "ros-args") {
-                // ROS2 args will be parsed separately by ROS2
-                continue;
-            }
-
-            else if (flag == "params-file") {
-                // Params file will be parsed separately by ROS2
-                i++; // Skip the next argument (params file path)
-                continue;
+                // Everything after --ros-args belongs to ROS 2 (remappings, params-file, etc.).
+                // Stop parsing here so we don't trip on ROS-specific flags we don't recognize.
+                break;
             }
 
             else {

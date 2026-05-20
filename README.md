@@ -82,6 +82,7 @@ make uninstall-opencv-cuda OPENCV_VERSION=4.8.0
 Create a ROS 2 workspace and copy (or symlink) the `yolov8` and `yolov8_interfaces` packages into its `src/` directory. Then from the workspace root:
 
 ```bash
+source /opt/ros/iron/setup.bash
 cp example.env yolov8.env
 # Edit yolov8.env for your model path, camera topics, etc.
 
@@ -100,12 +101,6 @@ ros2 launch yolov8 yolov8.launch.py
 The launch file reads parameters from `install/yolov8/share/yolov8/yolov8.env`, which is installed from the workspace-root `yolov8.env`. **You must rebuild after editing `yolov8.env`** so the share copy is refreshed.
 
 The first run on a given GPU will build the TensorRT engine and cache it in `install/yolov8/share/yolov8/models/engines/`. Subsequent runs load the cached engine and start in seconds. Use `make copy-engine` to preserve the engine across `make clean`.
-
-You can also run the node directly without the launch file:
-
-```bash
-ros2 run yolov8 ros_segmentation --model <path/to/model.onnx>
-```
 
 ## Tmuxp
 
@@ -137,6 +132,16 @@ Common errors:
 - **`No module named rclpy`** — you are in a conda environment. Deactivate it.
 - **`libnvinfer.so.*: cannot open shared object file`** — TAR install of TensorRT not on `LD_LIBRARY_PATH`. Re-source after exporting it.
 - **`cuda_runtime_api.h could not determine number of CUDA-capable devices`** — usually appears after long uptime; reboot.
+
+## Design notes
+
+A few deliberate choices that may look odd at first glance:
+
+- **`src/yolov8/libs/tensorrt-cpp-api/` is vendored MIT code** from [YOLOv8-TensorRT-CPP](https://github.com/cyrusbehr/YOLOv8-TensorRT-CPP). It is kept close to upstream so future syncs are tractable; we only apply bug fixes and small cleanups, not structural refactors. It logs to `std::cout`/`std::cerr` because it is designed to be usable outside ROS.
+- **`-Ofast` (not `-O3`)** in the CMakeLists — this is a real-time inference workload, the fast-math relaxations are acceptable, and the measured speedup over `-O3` is non-trivial. Debug builds drop the flag.
+- **`BATCH_SIZE` is fixed at engine-build time** and must equal `len(CAMERA_TOPICS)`. The TensorRT engine is specialized to exactly that batch size for performance; varying it would require an engine rebuild.
+- **Camera frame buffering**: the node accumulates the next frame from each camera and flushes either when all cameras have published (most of the time) or when `CAMERA_BUFFER_HZ` elapses (graceful degradation when a camera stalls). Cameras that did not publish in a given window contribute a zero placeholder image to the batch but do not produce detections.
+- **No unit tests are shipped.** The hot path is GPU-coupled (TensorRT + CUDA + OpenCV-with-CUDA), and meaningful tests require the target hardware; we lean on integration testing via rosbags instead.
 
 ## Sources
 
