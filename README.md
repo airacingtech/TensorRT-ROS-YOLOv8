@@ -115,7 +115,7 @@ Install tmuxp with `sudo apt install tmuxp`.
 
 ## Debugging
 
-Use `debug_yolov8.launch.py` with the [ROS 2 VSCode extension](https://docs.ros.org/en/rolling/How-To-Guides/ROS-2-IDEs.html). It is identical to `yolov8.launch.py` except the `nice -n` prefix is omitted (GDB cannot attach to a `nice`'d process).
+Use `debug_yolov8.launch.py` with the [ROS 2 VSCode extension](https://docs.ros.org/en/rolling/How-To-Guides/ROS-2-IDEs.html). It is a thin wrapper around `yolov8.launch.py` that passes `debug:=true`, which drops the `nice -n` prefix (GDB cannot attach across `nice`). Equivalent to running `ros2 launch yolov8 yolov8.launch.py debug:=true` directly.
 
 ## Troubleshooting
 

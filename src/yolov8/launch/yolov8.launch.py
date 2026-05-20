@@ -1,8 +1,15 @@
-"""Launch the yolov8 segmentation node with parameters read from yolov8.env."""
+"""Launch the yolov8 segmentation node with parameters read from yolov8.env.
+
+Pass `debug:=true` to skip the `nice -n` prefix so a debugger can attach;
+that is what debug_yolov8.launch.py does.
+"""
 import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition, UnlessCondition
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 
@@ -85,19 +92,40 @@ def generate_launch_description():
     # Keep --class-names last so its variadic argument list isn't split by another flag.
     cli_args.extend(['--class-names', *class_names])
 
+    node_params = [{
+        'camera_topics': camera_topics,
+        'camera_topic_suffix': camera_topic_suffix,
+        'camera_buffer_hz': camera_buffer_hz,
+        'visualize_masks': visualize_masks,
+        'enable_one_channel_mask': enable_one_channel_mask,
+        'visualize_one_channel_mask': visualize_one_channel_mask,
+    }]
+
+    debug_arg = DeclareLaunchArgument(
+        'debug',
+        default_value='false',
+        description='If true, omit the `nice -n` prefix so GDB / the ROS 2 VS Code extension can attach.',
+    )
+    debug = LaunchConfiguration('debug')
+
+    # Two near-identical Nodes selected by `debug`: GDB cannot attach across a `nice` exec, so the
+    # debug path must drop the prefix. Using IfCondition/UnlessCondition keeps the rest of the node
+    # configuration in a single place.
     return LaunchDescription([
+        debug_arg,
         Node(
             package='yolov8',
             executable='ros_segmentation',
-            parameters=[{
-                'camera_topics': camera_topics,
-                'camera_topic_suffix': camera_topic_suffix,
-                'camera_buffer_hz': camera_buffer_hz,
-                'visualize_masks': visualize_masks,
-                'enable_one_channel_mask': enable_one_channel_mask,
-                'visualize_one_channel_mask': visualize_one_channel_mask,
-            }],
+            parameters=node_params,
             arguments=cli_args,
             prefix=[f'nice -n {nice_level}'],
-        )
+            condition=UnlessCondition(debug),
+        ),
+        Node(
+            package='yolov8',
+            executable='ros_segmentation',
+            parameters=node_params,
+            arguments=cli_args,
+            condition=IfCondition(debug),
+        ),
     ])

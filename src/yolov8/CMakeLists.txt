@@ -37,7 +37,7 @@ include(cmake/ccache.cmake)
 set(CMAKE_CXX_STANDARD 17)
 # -Wno-deprecated-declarations silences benign deprecations from the TensorRT/OpenCV headers we
 # do not control. Project code itself stays free of deprecated APIs.
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wno-deprecated-declarations")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-deprecated-declarations")
 # -Ofast is deliberate: this is a real-time inference workload, the fast-math relaxations are
 # acceptable (we do not rely on strict IEEE NaN/inf semantics on the hot path), and the
 # measured speedup over -O3 is non-trivial. -Ofast is skipped under Debug so `make build-debug`
