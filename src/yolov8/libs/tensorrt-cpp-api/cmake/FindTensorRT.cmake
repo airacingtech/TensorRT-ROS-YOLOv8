@@ -18,12 +18,12 @@
 #
 # Hints
 # ^^^^^
-# A user may set ``TensorRT_DIR`` to an installation root to tell this module where to look.
+# A user may set ``TensorRT_ROOT`` to an installation root to tell this module where to look.
 #
 set(_TensorRT_SEARCHES)
 
-if(TensorRT_DIR)
-    set(_TensorRT_SEARCH_ROOT PATHS ${TensorRT_DIR} NO_DEFAULT_PATH)
+if(TensorRT_ROOT)
+    set(_TensorRT_SEARCH_ROOT PATHS ${TensorRT_ROOT} NO_DEFAULT_PATH)
     list(APPEND _TensorRT_SEARCHES _TensorRT_SEARCH_ROOT)
 endif()
 
