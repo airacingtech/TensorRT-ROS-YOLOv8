@@ -98,14 +98,27 @@ std::vector<std::vector<Object>> YoloV8::postProcessSegmentation(std::vector<std
 std::vector<Object> YoloV8::postProcessSegmentation(std::vector<std::vector<float>>& featureVectors, int batch_index) {
     const auto& outputDims = m_trtEngine->getOutputDims();
 
-    const int numChannels = outputDims[outputDims.size() - 1].d[1];
-    const int numAnchors = outputDims[outputDims.size() - 1].d[2];
+    // The two outputs are the detection head ([1, 4+numClasses+SEG_CHANNELS, anchors]) and the
+    // mask prototypes ([1, SEG_CHANNELS, SEG_H, SEG_W]). Their binding order depends on the ONNX
+    // exporter, so identify each by shape rather than assuming a fixed index — a mismatch points
+    // the prototypes Mat at the (smaller) detection buffer and reads out of bounds (segfault).
+    int detIdx = 0, protoIdx = 0;
+    for (size_t k = 0; k < outputDims.size(); ++k) {
+        if (outputDims[k].d[1] > SEG_CHANNELS + 4) {
+            detIdx = static_cast<int>(k);
+        } else {
+            protoIdx = static_cast<int>(k);
+        }
+    }
+
+    const int numChannels = outputDims[detIdx].d[1];
+    const int numAnchors = outputDims[detIdx].d[2];
     const int numClasses = numChannels - SEG_CHANNELS - 4;
 
-    cv::Mat output = cv::Mat(numChannels, numAnchors, CV_32F, featureVectors[1].data());
+    cv::Mat output = cv::Mat(numChannels, numAnchors, CV_32F, featureVectors[detIdx].data());
     output = output.t();
 
-    cv::Mat protos = cv::Mat(SEG_CHANNELS, SEG_H * SEG_W, CV_32F, featureVectors[0].data());
+    cv::Mat protos = cv::Mat(SEG_CHANNELS, SEG_H * SEG_W, CV_32F, featureVectors[protoIdx].data());
 
     std::vector<int> labels;
     std::vector<float> scores;
