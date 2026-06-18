@@ -234,3 +234,7 @@ cython_debug/
 # ========================
 *.env
 !example.env
+
+# Source dependencies imported by `make deps` (see dependencies.repos)
+# ========================
+/src/vision_opencv/

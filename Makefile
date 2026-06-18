@@ -8,6 +8,7 @@ SHELL := /bin/bash
 .PHONY: help
 help:
 	@echo "Available targets:"
+	@echo "  deps                   Import source-only deps (cv_bridge) into src/"
 	@echo "  build                  Build with colcon (release)"
 	@echo "  build-debug            Build with colcon (debug symbols)"
 	@echo "  clean                  Remove build/, install/, and log/"
@@ -21,6 +22,17 @@ help:
 .PHONY: clean
 clean:
 	rm -rf build/ install/ log/
+
+# Import source-only dependencies (cv_bridge / vision_opencv) into src/.
+# Needed on a ROS 2 source build (e.g. Jazzy on Ubuntu 22.04) where cv_bridge has
+# no apt package. On a binary ROS install, `rosdep install` covers it instead.
+.PHONY: deps
+deps:
+	mkdir -p src
+	vcs import src < dependencies.repos
+	# opencv_tests isn't needed to build/run yolov8 and pulls extra test deps.
+	if [ -d src/vision_opencv/opencv_tests ]; then touch src/vision_opencv/opencv_tests/COLCON_IGNORE; fi
+	@echo "Source deps imported into src/. Now run 'make build'."
 
 .PHONY: build
 build:

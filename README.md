@@ -1,6 +1,6 @@
 # TensorRT YOLOv8 ROS Instance Segmentation
 
-Real-time multi-camera instance segmentation for AI Racing Tech, implemented as a ROS 2 C++ node that runs a fine-tuned YOLOv8 segmentation model through TensorRT. Designed for ROS 2 Iron on Ubuntu 22.04 with NVIDIA GPUs.
+Real-time multi-camera instance segmentation for AI Racing Tech, implemented as a ROS 2 C++ node that runs a fine-tuned YOLOv8 segmentation model through TensorRT. Designed for ROS 2 Jazzy with NVIDIA GPUs.
 
 The node consumes one image topic per camera, batches a fixed-size group of frames per inference tick (matching the model's batch size), and publishes detections, optional overlay images, and an optional one-channel mask image suitable for LiDAR projection.
 
@@ -32,11 +32,12 @@ Published when both `enable_one_channel_mask=true` and `visualize_one_channel_ma
 
 ## Installation
 
-Tested on Ubuntu 22.04 with ROS 2 Iron. Other distributions are unsupported.
+Targets ROS 2 Jazzy. On Ubuntu 24.04 use the Jazzy debs; on Ubuntu 22.04 there are no Jazzy debs, so use a Jazzy source build (this is how the ART stack runs Jazzy on 22.04).
 
-### 1. ROS 2 Iron
+### 1. ROS 2 Jazzy
 
-Install from the Debian packages: https://docs.ros.org/en/iron/Installation/Ubuntu-Install-Debians.html
+- Ubuntu 24.04 (debs): https://docs.ros.org/en/jazzy/Installation/Ubuntu-Install-Debs.html
+- Ubuntu 22.04 (source build): https://docs.ros.org/en/jazzy/Installation/Alternatives/Ubuntu-Development-Setup.html
 
 Do not source a conda environment when building or running this package — ROS 2 does not officially support conda and it tends to break `rclpy`.
 
@@ -77,15 +78,26 @@ To revert (pass the version that was originally installed):
 make uninstall-opencv-cuda OPENCV_VERSION=4.8.0
 ```
 
+### 6. ROS dependencies (cv_bridge)
+
+This package depends on `cv_bridge`. On a **binary** ROS 2 install,
+`rosdep install --from-paths src --ignore-src -r -y` pulls it in. On a ROS 2
+**source build** (e.g. Jazzy on Ubuntu 22.04) `cv_bridge` has no apt package, so
+build it from source — `make deps` imports `vision_opencv` (pinned in
+`dependencies.repos`) into `src/`, and the subsequent `make build` builds it
+alongside `yolov8`. It picks up the same `/usr/local` CUDA OpenCV from step 5.
+
 ## Building
 
-Create a ROS 2 workspace and copy (or symlink) the `yolov8` and `yolov8_interfaces` packages into its `src/` directory. Then from the workspace root:
+Build from this repository's root (it is the colcon workspace — `yolov8` and
+`yolov8_interfaces` live in `src/`). Then:
 
 ```bash
-source /opt/ros/iron/setup.bash
+source /opt/ros/jazzy/setup.bash    # or your Jazzy source build's install/setup.bash
 cp example.env yolov8.env
 # Edit yolov8.env for your model path, camera topics, etc.
 
+make deps      # first time only: import source-only deps (cv_bridge) — see step 6
 make build
 source install/setup.bash
 ```

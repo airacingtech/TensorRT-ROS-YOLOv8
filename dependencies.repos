@@ -1,0 +1,18 @@
+# Source-only ROS dependencies for this package.
+#
+# cv_bridge (from vision_opencv) is required to build. On a BINARY ROS 2 install
+# it comes from the package manager (e.g. `ros-<distro>-cv-bridge`, pulled in by
+# `rosdep install`). On a ROS 2 SOURCE build — e.g. Jazzy on Ubuntu 22.04, where
+# no apt packages exist — cv_bridge is usually absent, so build it from source.
+#
+# Usage:
+#   make deps     # vcs import into ./src
+#   make build    # builds cv_bridge alongside yolov8 (correct order via package.xml)
+#
+# vision_opencv has no `jazzy` branch — its per-distro branches stop at `iron`,
+# and `rolling` is the branch that serves Jazzy and newer. Pin to `rolling`.
+repositories:
+  vision_opencv:
+    type: git
+    url: https://github.com/ros-perception/vision_opencv.git
+    version: rolling
