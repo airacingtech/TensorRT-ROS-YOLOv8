@@ -54,8 +54,8 @@ Download from https://developer.nvidia.com/cudnn and install per https://docs.nv
 ### 4. TensorRT
 
 **Validated setup: TensorRT 8.6.1.6 + CUDA 11.8** (current ART machine — builds
-and runs). TensorRT 10 GA also works but is not the validated configuration; if
-you use it, expect to verify yourself.
+and runs). TensorRT 10 GA *may* work but is not validated — verify it yourself
+if you go that route.
 
 Install either the DEB package or the TAR archive — not both. By default this package looks for TensorRT at `/usr/src/tensorrt`. To use a TAR install elsewhere, set `TensorRT_DIR` or the `TENSORRT_DIR` environment variable to the TAR's root directory:
 
