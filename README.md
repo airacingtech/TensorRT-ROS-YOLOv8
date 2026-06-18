@@ -87,6 +87,25 @@ build it from source — `make deps` imports `vision_opencv` (pinned in
 `dependencies.repos`) into `src/`, and the subsequent `make build` builds it
 alongside `yolov8`. It picks up the same `/usr/local` CUDA OpenCV from step 5.
 
+### 7. Model weights (ONNX)
+
+The node loads a YOLOv8 **segmentation** model in ONNX form. Weights are **not**
+committed to this repo (`models/` is git-ignored) — get the team's published
+ONNX or export one from the training repo (`YOLOv8-Fine-Tune`), and place it in
+`src/yolov8/models/`:
+
+```bash
+cp <your-model>.onnx src/yolov8/models/
+```
+
+**The batch size must match the camera count.** The ONNX batch dimension,
+`BATCH_SIZE`, and the number of entries in `CAMERA_TOPICS` (all in `yolov8.env`)
+must be **equal** — TensorRT specializes the engine to that batch at build time.
+Typical setups run **4 or 6 cameras**, so use a **batch-4 or batch-6** ONNX
+(export at the right batch with `export_onnx.py --batch <N>` from the training
+repo). On first launch the ONNX is compiled into a cached TensorRT engine (see
+[Running](#running)).
+
 ## Building
 
 Build from this repository's root (it is the colcon workspace — `yolov8` and
@@ -95,10 +114,11 @@ Build from this repository's root (it is the colcon workspace — `yolov8` and
 ```bash
 source /opt/ros/jazzy/setup.bash    # or your Jazzy source build's install/setup.bash
 cp example.env yolov8.env
-# Edit yolov8.env for your model path, camera topics, etc.
+# In yolov8.env set: ONNX_MODEL (file in models/), CAMERA_TOPICS, CAMERA_TOPIC_SUFFIX,
+# and BATCH_SIZE == ONNX batch == number of CAMERA_TOPICS. See "Model weights" (step 7).
 
 make deps      # first time only: import source-only deps (cv_bridge) — see step 6
-make build
+make build     # also builds cv_bridge; installs yolov8.env + models/ into install/
 source install/setup.bash
 ```
 
