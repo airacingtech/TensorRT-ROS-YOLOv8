@@ -53,14 +53,18 @@ Download from https://developer.nvidia.com/cudnn and install per https://docs.nv
 
 ### 4. TensorRT
 
-Install either the DEB package or the TAR archive — not both. By default this package looks for TensorRT at `/usr/src/tensorrt` (the DEB layout). To use a TAR install, set `TensorRT_DIR` or the `TENSORRT_DIR` environment variable to the TAR's root directory:
+**Validated setup: TensorRT 8.6.1.6 + CUDA 11.8** (current ART machine — builds
+and runs). TensorRT 10 GA also works but is not the validated configuration; if
+you use it, expect to verify yourself.
+
+Install either the DEB package or the TAR archive — not both. By default this package looks for TensorRT at `/usr/src/tensorrt`. To use a TAR install elsewhere, set `TensorRT_DIR` or the `TENSORRT_DIR` environment variable to the TAR's root directory:
 
 ```bash
-export TENSORRT_DIR="$HOME/libs/TensorRT-10.x.x.x/"
+export TENSORRT_DIR="$HOME/libs/TensorRT-8.6.x.x/"
 ```
 
-- **DEB (recommended)**: TensorRT 10 GA from https://developer.nvidia.com/tensorrt/download/10x (install full C++ and Python runtimes). Headers live in `/usr/src/tensorrt`, shared libs in `/usr/lib/x86_64-linux-gnu/`.
-- **TAR**: TensorRT 8.6 or 10 GA. Unpack into `~/libs/` and follow https://docs.nvidia.com/deeplearning/tensorrt/install-guide/index.html#installing-tar. Remember to add the TensorRT `lib/` to `LD_LIBRARY_PATH` in your shell rc.
+- **TAR (validated)**: TensorRT **8.6** GA. Unpack into `~/libs/` and follow https://docs.nvidia.com/deeplearning/tensorrt/install-guide/index.html#installing-tar. Add the TensorRT `lib/` to `LD_LIBRARY_PATH` in your shell rc.
+- **DEB**: TensorRT 8.6 or 10 GA from https://developer.nvidia.com/tensorrt (install full C++ and Python runtimes). Headers live in `/usr/src/tensorrt`, shared libs in `/usr/lib/x86_64-linux-gnu/`.
 
 ### 5. OpenCV 4.8.0 with CUDA
 
