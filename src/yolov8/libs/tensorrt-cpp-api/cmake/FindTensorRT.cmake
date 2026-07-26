@@ -76,7 +76,12 @@ if(TensorRT_FOUND)
     set(TensorRT_INCLUDE_DIRS ${TensorRT_INCLUDE_DIR})
 
     if(NOT TensorRT_LIBRARIES)
-        set(TensorRT_LIBRARIES ${TensorRT_LIBRARY} ${TensorRT_NVONNXPARSER_LIBRARY} ${TensorRT_NVPARSERS_LIBRARY})
+        # nvinfer + nvonnxparser are always required. nvparsers (the legacy Caffe/UFF
+        # parser) was deprecated and REMOVED in TensorRT 10, so only link it if present.
+        set(TensorRT_LIBRARIES ${TensorRT_LIBRARY} ${TensorRT_NVONNXPARSER_LIBRARY})
+        if(TensorRT_NVPARSERS_LIBRARY)
+            list(APPEND TensorRT_LIBRARIES ${TensorRT_NVPARSERS_LIBRARY})
+        endif()
     endif()
 
     if(NOT TARGET TensorRT::TensorRT)

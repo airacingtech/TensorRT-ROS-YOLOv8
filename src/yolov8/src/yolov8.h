@@ -56,10 +56,24 @@ public:
     int getInputWidth() const { return m_trtEngine->getInputDims()[0].d[2]; }
 
 private:
+    // Which output binding is the detection head and which the mask prototypes; resolved once
+    // from the engine's output shapes.
+    void resolveOutputBindings();
+    int m_detIdx = 0;
+    int m_protoIdx = 1;
+    cv::cuda::GpuMat m_headT;
+    cv::cuda::GpuMat m_bestScores;
+    // All post-processing runs on one stream and is waited on once with a blocking event.
+    // Each default-stream OpenCV CUDA call would otherwise spin-wait on its own.
+    cv::cuda::Stream m_stream;
+    cudaEvent_t m_ppDone = nullptr;
+    void syncPostProcess();
+    bool m_bindingsResolved = false;
+
     std::vector<std::vector<cv::cuda::GpuMat>> preprocess(std::vector<cv::cuda::GpuMat> &gpuImgs);
 
-    std::vector<std::vector<Object>> postProcessSegmentation(std::vector<std::vector<std::vector<float>>>& batchedFeatureVectors);
-    std::vector<Object> postProcessSegmentation(std::vector<std::vector<float>>& featureVectors, int batch_index);
+    std::vector<std::vector<Object>> postProcessSegmentation(int batchSize);
+    std::vector<Object> postProcessBatchItem(int batch_index);
 
     std::unique_ptr<Engine> m_trtEngine = nullptr;
 
