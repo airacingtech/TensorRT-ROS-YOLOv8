@@ -14,7 +14,9 @@
 #include "yolov8_interfaces/msg/yolov8_b_box.hpp"
 
 #ifdef YOLOV8_WITH_NITROS
+#include "isaac_ros_managed_nitros/managed_nitros_publisher.hpp"
 #include "isaac_ros_managed_nitros/managed_nitros_subscriber.hpp"
+#include "isaac_ros_nitros_image_type/nitros_image_builder.hpp"
 #include "isaac_ros_nitros_image_type/nitros_image_view.hpp"
 #endif
 
@@ -29,6 +31,92 @@ struct FrameInput
     cv::cuda::GpuMat gpu;
     cv::Mat host;
 };
+
+#ifdef YOLOV8_WITH_NITROS
+// Tightly packed device buffers handed to NITROS. NITROS owns a buffer until it fires the
+// release callback, so a single scratch image would be overwritten while still in the encoder.
+class AnnotatedStream
+{
+public:
+    AnnotatedStream(rclcpp::Node* node, const std::string& topic, size_t slots)
+    : pool_(std::make_shared<Pool>(slots))
+    , publisher_(std::make_shared<nvidia::isaac_ros::nitros::ManagedNitrosPublisher<
+          nvidia::isaac_ros::nitros::NitrosImage>>(
+          node, topic, nvidia::isaac_ros::nitros::nitros_image_bgr8_t::supported_type_name,
+          nvidia::isaac_ros::nitros::NitrosDiagnosticsConfig{}, rclcpp::QoS(10)))
+    {
+    }
+
+    // Returns a GpuMat view over a pooled buffer, or an empty mat when every slot is in flight.
+    cv::cuda::GpuMat acquire(int width, int height, int& slot)
+    {
+        void* data = nullptr;
+        slot = pool_->acquire(static_cast<size_t>(width) * height * 3, &data);
+        if (slot < 0) {
+            return cv::cuda::GpuMat();
+        }
+        return cv::cuda::GpuMat(height, width, CV_8UC3, data, static_cast<size_t>(width) * 3);
+    }
+
+    void release(int slot) { pool_->release(slot); }
+
+    void publish(const std_msgs::msg::Header& header, const cv::cuda::GpuMat& image, int slot)
+    {
+        auto pool = pool_;
+        publisher_->publish(nvidia::isaac_ros::nitros::NitrosImageBuilder()
+                                .WithHeader(header)
+                                .WithEncoding(sensor_msgs::image_encodings::BGR8)
+                                .WithDimensions(image.rows, image.cols)
+                                .WithGpuData(image.data)
+                                .WithReleaseCallback([pool, slot]() { pool->release(slot); })
+                                .Build());
+    }
+
+private:
+    struct Pool
+    {
+        struct Slot { void* data{nullptr}; size_t size{0}; bool in_use{false}; };
+
+        explicit Pool(size_t count) : slots(count) {}
+        ~Pool()
+        {
+            for (auto& s : slots) {
+                if (s.data != nullptr) { cudaFree(s.data); }
+            }
+        }
+
+        int acquire(size_t bytes, void** data)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            for (size_t i = 0; i < slots.size(); ++i) {
+                if (slots[i].in_use) { continue; }
+                if (slots[i].size < bytes) {
+                    if (slots[i].data != nullptr) { cudaFree(slots[i].data); slots[i].data = nullptr; }
+                    if (cudaMalloc(&slots[i].data, bytes) != cudaSuccess) { slots[i].data = nullptr; return -1; }
+                    slots[i].size = bytes;
+                }
+                slots[i].in_use = true;
+                *data = slots[i].data;
+                return static_cast<int>(i);
+            }
+            return -1;
+        }
+
+        void release(int index)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            slots[static_cast<size_t>(index)].in_use = false;
+        }
+
+        std::mutex mutex;
+        std::vector<Slot> slots;
+    };
+
+    std::shared_ptr<Pool> pool_;
+    std::shared_ptr<nvidia::isaac_ros::nitros::ManagedNitrosPublisher<
+        nvidia::isaac_ros::nitros::NitrosImage>> publisher_;
+};
+#endif
 
 class YoloV8Node : public rclcpp::Node
 {
@@ -77,6 +165,16 @@ private:
         config.segmentationThreshold = static_cast<float>(node->declare_parameter<double>("seg_threshold", config.segmentationThreshold));
         config.classNames = node->declare_parameter<std::vector<std::string>>("class_names", config.classNames);
 
+        // Masks cost a prototype matmul, a per-detection upsample and a device-to-host copy per
+        // detection, so they are only computed if something downstream actually reads them.
+        const bool visualize_masks = node->declare_parameter<bool>("visualize_masks", false);
+        const bool one_channel_mask = node->declare_parameter<bool>("enable_one_channel_mask", false);
+        config.segmentationMasks = visualize_masks || one_channel_mask;
+        if (!config.segmentationMasks) {
+            RCLCPP_INFO(node->get_logger(),
+                        "Segmentation masks disabled; publishing boxes and labels only.");
+        }
+
         RCLCPP_INFO(node->get_logger(),
                     "Building YoloV8 engine from %s -- slow on first run, then cached.",
                     model_path.c_str());
@@ -92,9 +190,7 @@ private:
         this->get_parameter("camera_topic_suffix", camera_topic_suffix_);
         this->declare_parameter<double>("camera_buffer_hz", camera_buffer_hz_);
         this->get_parameter("camera_buffer_hz", camera_buffer_hz_);
-        this->declare_parameter<bool>("visualize_masks", visualize_masks_);
         this->get_parameter("visualize_masks", visualize_masks_);
-        this->declare_parameter<bool>("enable_one_channel_mask", enable_one_channel_mask_);
         this->get_parameter("enable_one_channel_mask", enable_one_channel_mask_);
         this->declare_parameter<bool>("visualize_one_channel_mask", visualize_one_channel_mask_);
         this->get_parameter("visualize_one_channel_mask", visualize_one_channel_mask_);
@@ -102,6 +198,8 @@ private:
         this->get_parameter("use_nitros", use_nitros_);
         this->declare_parameter<std::string>("nitros_topic_suffix", nitros_topic_suffix_);
         this->get_parameter("nitros_topic_suffix", nitros_topic_suffix_);
+        this->declare_parameter<int64_t>("annotate_long_edge", annotate_long_edge_);
+        this->get_parameter("annotate_long_edge", annotate_long_edge_);
 #ifndef YOLOV8_WITH_NITROS
         if (use_nitros_) {
             RCLCPP_WARN(this->get_logger(),
@@ -174,6 +272,14 @@ private:
 
             detection_publishers_[topic] = this->create_publisher<yolov8_interfaces::msg::Yolov8Detections>(
                 "/yolov8" + topic + "/detections", qos_profile);
+#ifdef YOLOV8_WITH_NITROS
+            if (annotate_long_edge_ > 0 && use_nitros_) {
+                const std::string annotated = "/yolov8" + topic + "/image/nitros";
+                annotated_streams_[topic] = std::make_unique<AnnotatedStream>(this, annotated, 4);
+                RCLCPP_INFO(this->get_logger(), "  annotated NITROS stream on %s",
+                            annotated.c_str());
+            }
+#endif
             if (visualize_masks_) {
                 image_publishers_[topic] = this->create_publisher<sensor_msgs::msg::Image>(
                     "/yolov8" + topic + "/image", qos_profile);
@@ -340,8 +446,64 @@ private:
 
             addObjectsToDetectionMsg(objects[i], detectionMsg);
             detection_publishers_[topic]->publish(detectionMsg);
+#ifdef YOLOV8_WITH_NITROS
+            publishAnnotated(frames[i], objects[i], topic);
+#endif
         }
     }
+
+#ifdef YOLOV8_WITH_NITROS
+    // Downscale the frame and stroke each detection onto it, all on the device, then hand the
+    // buffer to NITROS. This is what the H.264 encoder consumes when COMPRESSION_SOURCE=DETECTION,
+    // so the uplink carries boxes instead of raw pixels without a host round trip.
+    void publishAnnotated(const FrameInput& frame, const std::vector<Object>& objects,
+                          const std::string& topic) {
+        auto it = annotated_streams_.find(topic);
+        if (it == annotated_streams_.end() || frame.gpu.empty()) {
+            return;
+        }
+
+        const double scale = static_cast<double>(annotate_long_edge_) /
+                             std::max(frame.width, frame.height);
+        const int outW = std::max(16, static_cast<int>(std::lround(frame.width * scale / 16.0)) * 16);
+        const int outH = std::max(16, static_cast<int>(std::lround(frame.height * scale / 16.0)) * 16);
+
+        int slot = -1;
+        cv::cuda::GpuMat out = it->second->acquire(outW, outH, slot);
+        if (out.empty()) {
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                                 "Annotated buffers all in flight on %s; dropping frame",
+                                 topic.c_str());
+            return;
+        }
+
+        cv::cuda::resize(frame.gpu, out, out.size(), 0, 0, cv::INTER_LINEAR, annotate_stream_);
+
+        const double sx = static_cast<double>(outW) / frame.width;
+        const double sy = static_cast<double>(outH) / frame.height;
+        const int stroke = std::max(1, outH / 96);
+        const cv::Scalar colour(0, 255, 0);
+        const cv::Rect canvas(0, 0, outW, outH);
+        for (const Object& object : objects) {
+            cv::Rect r(static_cast<int>(std::lround(object.rect.x * sx)),
+                       static_cast<int>(std::lround(object.rect.y * sy)),
+                       static_cast<int>(std::lround(object.rect.width * sx)),
+                       static_cast<int>(std::lround(object.rect.height * sy)));
+            r &= canvas;
+            if (r.width <= 0 || r.height <= 0) {
+                continue;
+            }
+            const int t = std::min(stroke, std::min(r.width, r.height));
+            out(cv::Rect(r.x, r.y, r.width, t)).setTo(colour, annotate_stream_);
+            out(cv::Rect(r.x, r.y + r.height - t, r.width, t)).setTo(colour, annotate_stream_);
+            out(cv::Rect(r.x, r.y, t, r.height)).setTo(colour, annotate_stream_);
+            out(cv::Rect(r.x + r.width - t, r.y, t, r.height)).setTo(colour, annotate_stream_);
+        }
+
+        annotate_stream_.waitForCompletion();
+        it->second->publish(frame.header, out, slot);
+    }
+#endif
 
     void visualizeMask(std::vector<Object>& objects, FrameInput& frame,
                        const std::string& topic) {
@@ -441,6 +603,11 @@ private:
     bool use_nitros_ = false;
 #endif
     std::string nitros_topic_suffix_ = "/image/nitros";
+    int64_t annotate_long_edge_ = 0;
+#ifdef YOLOV8_WITH_NITROS
+    std::map<std::string, std::unique_ptr<AnnotatedStream>> annotated_streams_;
+    cv::cuda::Stream annotate_stream_;
+#endif
 
     // Cached from the model so the missing-topic fallback image matches the engine input.
     int model_input_height_ = 0;
