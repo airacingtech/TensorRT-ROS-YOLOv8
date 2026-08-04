@@ -41,11 +41,26 @@ if(NOT EXISTS "${TensorRT_ROOT}")
 endif()
 
 # CUDA toolkit. Override with -DCUDA_VERSION=<x.y> or CUDA_TOOLKIT_ROOT_DIR if needed.
-if(NOT DEFINED CUDA_VERSION)
-    set(CUDA_VERSION "11.8")
+# Pin with -DCUDA_VERSION=<x.y>; otherwise follow the /usr/local/cuda symlink, which tracks
+# whatever toolkit is installed (13.x on the AV24 and the dev laptops).
+if(DEFINED CUDA_VERSION)
+    set(CUDA_TOOLKIT_ROOT_DIR "/usr/local/cuda-${CUDA_VERSION}")
+else()
+    # Derive from nvcc on PATH, not the /usr/local/cuda symlink: OpenCV-CUDA pins the exact
+    # toolkit it was built against, and a machine can have several installed.
+    find_program(_nvcc nvcc)
+    if(_nvcc)
+        get_filename_component(CUDA_TOOLKIT_ROOT_DIR "${_nvcc}" DIRECTORY)
+        get_filename_component(CUDA_TOOLKIT_ROOT_DIR "${CUDA_TOOLKIT_ROOT_DIR}" DIRECTORY)
+    else()
+        set(CUDA_TOOLKIT_ROOT_DIR "/usr/local/cuda")
+    endif()
 endif()
-set(CUDA_TOOLKIT_ROOT_DIR "/usr/local/cuda-${CUDA_VERSION}")
-set(CMAKE_CUDA_COMPILER "/usr/local/cuda-${CUDA_VERSION}/bin/nvcc")
+if(NOT EXISTS "${CUDA_TOOLKIT_ROOT_DIR}")
+    message(FATAL_ERROR "CUDA toolkit not found at ${CUDA_TOOLKIT_ROOT_DIR}. "
+        "Install it or pass -DCUDA_VERSION=<x.y>.")
+endif()
+set(CMAKE_CUDA_COMPILER "${CUDA_TOOLKIT_ROOT_DIR}/bin/nvcc")
 
 find_package(TensorRT REQUIRED)
 find_package(CUDA REQUIRED)
@@ -54,7 +69,7 @@ find_package(OpenCV 4.8.0 REQUIRED)
 message(STATUS "TensorRT_DIR: ${TensorRT_DIR}")
 message(STATUS "TensorRT include: ${TensorRT_INCLUDE_DIRS}")
 message(STATUS "TensorRT libraries: ${TensorRT_LIBRARIES}")
-message(STATUS "CUDA version: ${CUDA_VERSION}")
+message(STATUS "CUDA toolkit: ${CUDA_TOOLKIT_ROOT_DIR}")
 message(STATUS "OpenCV version: ${OpenCV_VERSION}")
 
 add_library(tensorrt_cpp_api SHARED src/engine.cpp)

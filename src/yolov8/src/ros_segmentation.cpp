@@ -4,18 +4,184 @@
 #include "cmd_line_util.h"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/image.hpp"
+#include "std_msgs/msg/header.hpp"
 #include "cv_bridge/cv_bridge.hpp"
+#include "rclcpp_components/register_node_macro.hpp"
 
 // Generated ROS 2 message headers (rosidl produces snake_case file names).
 #include "yolov8_interfaces/msg/point2_d.hpp"
 #include "yolov8_interfaces/msg/yolov8_detections.hpp"
 #include "yolov8_interfaces/msg/yolov8_b_box.hpp"
 
+#ifdef YOLOV8_WITH_NITROS
+#include "isaac_ros_managed_nitros/managed_nitros_publisher.hpp"
+#include "isaac_ros_managed_nitros/managed_nitros_subscriber.hpp"
+#include "isaac_ros_nitros_image_type/nitros_image_builder.hpp"
+#include "isaac_ros_nitros_image_type/nitros_image_view.hpp"
+#endif
+
+// One camera frame already resident on the GPU. The NITROS path fills `gpu` straight from a
+// device buffer; the sensor_msgs path uploads. `host` is only materialised when something
+// actually needs pixels on the CPU (mask overlay rendering).
+struct FrameInput
+{
+    std_msgs::msg::Header header;
+    int width = 0;
+    int height = 0;
+    cv::cuda::GpuMat gpu;
+    cv::Mat host;
+};
+
+#ifdef YOLOV8_WITH_NITROS
+// Tightly packed device buffers handed to NITROS. NITROS owns a buffer until it fires the
+// release callback, so a single scratch image would be overwritten while still in the encoder.
+class AnnotatedStream
+{
+public:
+    AnnotatedStream(rclcpp::Node* node, const std::string& topic, size_t slots)
+    : pool_(std::make_shared<Pool>(slots))
+    , publisher_(std::make_shared<nvidia::isaac_ros::nitros::ManagedNitrosPublisher<
+          nvidia::isaac_ros::nitros::NitrosImage>>(
+          node, topic, nvidia::isaac_ros::nitros::nitros_image_bgr8_t::supported_type_name,
+          nvidia::isaac_ros::nitros::NitrosDiagnosticsConfig{}, rclcpp::QoS(10)))
+    {
+    }
+
+    // Returns a GpuMat view over a pooled buffer, or an empty mat when every slot is in flight.
+    cv::cuda::GpuMat acquire(int width, int height, int& slot)
+    {
+        void* data = nullptr;
+        slot = pool_->acquire(static_cast<size_t>(width) * height * 3, &data);
+        if (slot < 0) {
+            return cv::cuda::GpuMat();
+        }
+        return cv::cuda::GpuMat(height, width, CV_8UC3, data, static_cast<size_t>(width) * 3);
+    }
+
+    void release(int slot) { pool_->release(slot); }
+
+    void publish(const std_msgs::msg::Header& header, const cv::cuda::GpuMat& image, int slot)
+    {
+        auto pool = pool_;
+        publisher_->publish(nvidia::isaac_ros::nitros::NitrosImageBuilder()
+                                .WithHeader(header)
+                                .WithEncoding(sensor_msgs::image_encodings::BGR8)
+                                .WithDimensions(image.rows, image.cols)
+                                .WithGpuData(image.data)
+                                .WithReleaseCallback([pool, slot]() { pool->release(slot); })
+                                .Build());
+    }
+
+private:
+    struct Pool
+    {
+        struct Slot { void* data{nullptr}; size_t size{0}; bool in_use{false}; };
+
+        explicit Pool(size_t count) : slots(count) {}
+        ~Pool()
+        {
+            for (auto& s : slots) {
+                if (s.data != nullptr) { cudaFree(s.data); }
+            }
+        }
+
+        int acquire(size_t bytes, void** data)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            for (size_t i = 0; i < slots.size(); ++i) {
+                if (slots[i].in_use) { continue; }
+                if (slots[i].size < bytes) {
+                    if (slots[i].data != nullptr) { cudaFree(slots[i].data); slots[i].data = nullptr; }
+                    if (cudaMalloc(&slots[i].data, bytes) != cudaSuccess) { slots[i].data = nullptr; return -1; }
+                    slots[i].size = bytes;
+                }
+                slots[i].in_use = true;
+                *data = slots[i].data;
+                return static_cast<int>(i);
+            }
+            return -1;
+        }
+
+        void release(int index)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            slots[static_cast<size_t>(index)].in_use = false;
+        }
+
+        std::mutex mutex;
+        std::vector<Slot> slots;
+    };
+
+    std::shared_ptr<Pool> pool_;
+    std::shared_ptr<nvidia::isaac_ros::nitros::ManagedNitrosPublisher<
+        nvidia::isaac_ros::nitros::NitrosImage>> publisher_;
+};
+#endif
+
 class YoloV8Node : public rclcpp::Node
 {
 public:
+    // Composable entry point: the engine cannot come from argv, so it is built from ROS
+    // parameters here. This is what lets the node load into the camera driver's container,
+    // which is the only way a NITROS device buffer stays resolvable.
+    explicit YoloV8Node(const rclcpp::NodeOptions& options)
+    : Node("yolo_v8", options), owned_engine_(makeEngineFromParams(this)), yoloV8_(*owned_engine_)
+    {
+        init();
+    }
+
+    // Standalone entry point, used by the ros_segmentation executable.
     explicit YoloV8Node(YoloV8& yoloV8)
     : Node("yolo_v8"), yoloV8_(yoloV8)
+    {
+        init();
+    }
+
+private:
+    static std::unique_ptr<YoloV8> makeEngineFromParams(rclcpp::Node* node) {
+        YoloV8Config config;
+        const std::string model_path = node->declare_parameter<std::string>("model_path", "");
+        if (model_path.empty()) {
+            throw std::runtime_error("ROS parameter 'model_path' must be set (path to the ONNX model).");
+        }
+
+        const std::string precision = node->declare_parameter<std::string>("precision", "FP16");
+        if (precision == "FP32") {
+            config.precision = Precision::FP32;
+        } else if (precision == "INT8") {
+            config.precision = Precision::INT8;
+        } else if (precision != "FP16") {
+            throw std::runtime_error("ROS parameter 'precision' must be FP32, FP16 or INT8.");
+        }
+
+        config.calibrationDataDirectory = node->declare_parameter<std::string>("calibration_data_directory", "");
+        config.batchSize = static_cast<int>(node->declare_parameter<int64_t>("batch_size", config.batchSize));
+        config.probabilityThreshold = static_cast<float>(node->declare_parameter<double>("prob_threshold", config.probabilityThreshold));
+        config.nmsThreshold = static_cast<float>(node->declare_parameter<double>("nms_threshold", config.nmsThreshold));
+        config.topK = static_cast<int>(node->declare_parameter<int64_t>("top_k", config.topK));
+        config.segChannels = static_cast<int>(node->declare_parameter<int64_t>("seg_channels", config.segChannels));
+        config.segH = static_cast<int>(node->declare_parameter<int64_t>("seg_h", config.segH));
+        config.segW = static_cast<int>(node->declare_parameter<int64_t>("seg_w", config.segW));
+        config.segmentationThreshold = static_cast<float>(node->declare_parameter<double>("seg_threshold", config.segmentationThreshold));
+        config.classNames = node->declare_parameter<std::vector<std::string>>("class_names", config.classNames);
+
+        // Masks cost a prototype matmul, a per-detection upsample and a device-to-host copy per
+        // detection, so they are only computed if something downstream actually reads them.
+        const bool visualize_masks = node->declare_parameter<bool>("visualize_masks", false);
+        const bool one_channel_mask = node->declare_parameter<bool>("enable_one_channel_mask", false);
+        config.segmentationMasks = visualize_masks || one_channel_mask;
+        if (!config.segmentationMasks) {
+            RCLCPP_INFO(node->get_logger(),
+                        "Segmentation masks disabled; publishing boxes and labels only.");
+        }
+
+        RCLCPP_INFO(node->get_logger(),
+                    "Building YoloV8 engine from %s -- slow on first run, then cached.",
+                    model_path.c_str());
+        return std::make_unique<YoloV8>(model_path, config);
+    }
+
+    void init()
     {
         // Declare and read ROS parameters.
         this->declare_parameter<std::vector<std::string>>("camera_topics", camera_topics_);
@@ -24,12 +190,23 @@ public:
         this->get_parameter("camera_topic_suffix", camera_topic_suffix_);
         this->declare_parameter<double>("camera_buffer_hz", camera_buffer_hz_);
         this->get_parameter("camera_buffer_hz", camera_buffer_hz_);
-        this->declare_parameter<bool>("visualize_masks", visualize_masks_);
         this->get_parameter("visualize_masks", visualize_masks_);
-        this->declare_parameter<bool>("enable_one_channel_mask", enable_one_channel_mask_);
         this->get_parameter("enable_one_channel_mask", enable_one_channel_mask_);
         this->declare_parameter<bool>("visualize_one_channel_mask", visualize_one_channel_mask_);
         this->get_parameter("visualize_one_channel_mask", visualize_one_channel_mask_);
+        this->declare_parameter<bool>("use_nitros", use_nitros_);
+        this->get_parameter("use_nitros", use_nitros_);
+        this->declare_parameter<std::string>("nitros_topic_suffix", nitros_topic_suffix_);
+        this->get_parameter("nitros_topic_suffix", nitros_topic_suffix_);
+        this->declare_parameter<int64_t>("annotate_long_edge", annotate_long_edge_);
+        this->get_parameter("annotate_long_edge", annotate_long_edge_);
+#ifndef YOLOV8_WITH_NITROS
+        if (use_nitros_) {
+            RCLCPP_WARN(this->get_logger(),
+                        "use_nitros is set but this node was built without Isaac ROS NITROS");
+            use_nitros_ = false;
+        }
+#endif
 
         if (camera_topics_.empty()) {
             throw std::runtime_error("ROS parameter 'camera_topics' must not be empty.");
@@ -64,18 +241,45 @@ public:
         rclcpp::SubscriptionOptions sub_options;
         sub_options.use_intra_process_comm = rclcpp::IntraProcessSetting::Enable;
         for (const std::string& topic : camera_topics_) {
-            const std::string full_topic = topic + camera_topic_suffix_;
-            auto subscription = this->create_subscription<sensor_msgs::msg::Image>(
-                full_topic, qos_profile,
-                [this, topic](const sensor_msgs::msg::Image::SharedPtr msg) {
-                    this->addToBufferCallback(msg, topic);
-                },
-                sub_options);
-            RCLCPP_INFO(this->get_logger(), "  %s", full_topic.c_str());
+            bool subscribed_nitros = false;
+#ifdef YOLOV8_WITH_NITROS
+            if (use_nitros_) {
+                const std::string nitros_topic = topic + nitros_topic_suffix_;
+                nitros_subscriptions_.push_back(
+                    std::make_shared<nvidia::isaac_ros::nitros::ManagedNitrosSubscriber<
+                        nvidia::isaac_ros::nitros::NitrosImageView>>(
+                        this, nitros_topic,
+                        nvidia::isaac_ros::nitros::nitros_image_bgr8_t::supported_type_name,
+                        [this, topic](const nvidia::isaac_ros::nitros::NitrosImageView& view) {
+                            this->addNitrosImageToBuffer(view, topic);
+                        },
+                        nvidia::isaac_ros::nitros::NitrosDiagnosticsConfig{}, rclcpp::QoS(10)));
+                RCLCPP_INFO(this->get_logger(), "  %s (NITROS, device memory)",
+                            nitros_topic.c_str());
+                subscribed_nitros = true;
+            }
+#endif
+            if (!subscribed_nitros) {
+                const std::string full_topic = topic + camera_topic_suffix_;
+                subscriptions_.push_back(this->create_subscription<sensor_msgs::msg::Image>(
+                    full_topic, qos_profile,
+                    [this, topic](const sensor_msgs::msg::Image::SharedPtr msg) {
+                        this->addImageMsgToBuffer(msg, topic);
+                    },
+                    sub_options));
+                RCLCPP_INFO(this->get_logger(), "  %s", full_topic.c_str());
+            }
 
-            subscriptions_.push_back(subscription);
             detection_publishers_[topic] = this->create_publisher<yolov8_interfaces::msg::Yolov8Detections>(
                 "/yolov8" + topic + "/detections", qos_profile);
+#ifdef YOLOV8_WITH_NITROS
+            if (annotate_long_edge_ > 0 && use_nitros_) {
+                const std::string annotated = "/yolov8" + topic + "/image/nitros";
+                annotated_streams_[topic] = std::make_unique<AnnotatedStream>(this, annotated, 4);
+                RCLCPP_INFO(this->get_logger(), "  annotated NITROS stream on %s",
+                            annotated.c_str());
+            }
+#endif
             if (visualize_masks_) {
                 image_publishers_[topic] = this->create_publisher<sensor_msgs::msg::Image>(
                     "/yolov8" + topic + "/image", qos_profile);
@@ -87,20 +291,67 @@ public:
         }
     }
 
-private:
-    using ImageBuffer = std::map<std::string, sensor_msgs::msg::Image::SharedPtr>;
+    using ImageBuffer = std::map<std::string, FrameInput>;
 
     // Push a freshly arrived image into the current buffer. Older images on the same topic are
     // discarded because the network is the throughput bottleneck. If every topic has produced an
     // image, we drain the buffer immediately instead of waiting for the timer.
-    void addToBufferCallback(const sensor_msgs::msg::Image::SharedPtr& image_msg, const std::string& topic) {
+    void addToBufferCallback(FrameInput&& frame, const std::string& topic) {
         std::unique_lock<std::mutex> lock(buffer_mutex_);
-        current_buffer_[topic] = image_msg;
+        current_buffer_[topic] = std::move(frame);
         if (current_buffer_.size() == camera_topics_.size()) {
             lock.unlock();
             batchBufferCallback();
         }
     }
+
+    // sensor_msgs ingest: cv_bridge to host BGR, then upload. Used when NITROS is unavailable or
+    // the publisher is a plain ROS camera driver.
+    void addImageMsgToBuffer(const sensor_msgs::msg::Image::SharedPtr& image_msg,
+                             const std::string& topic) {
+        FrameInput frame;
+        frame.header = image_msg->header;
+        try {
+            auto cv_ptr = cv_bridge::toCvShare(image_msg, sensor_msgs::image_encodings::RGB8);
+            cv::cvtColor(cv_ptr->image, frame.host, cv::COLOR_RGB2BGR);
+        } catch (cv_bridge::Exception& e) {
+            RCLCPP_ERROR(this->get_logger(), "Failed to convert ROS image on topic %s: %s",
+                         topic.c_str(), e.what());
+            return;
+        }
+        frame.width = frame.host.cols;
+        frame.height = frame.host.rows;
+        frame.gpu.upload(frame.host);
+        addToBufferCallback(std::move(frame), topic);
+    }
+
+#ifdef YOLOV8_WITH_NITROS
+    // NITROS ingest: the frame is already in device memory, so this copies device-to-device into
+    // a buffer we own (the view's memory is only valid for the duration of the callback) and
+    // never touches the host. cv_bridge, the RGB->BGR pass and the H2D upload all disappear.
+    void addNitrosImageToBuffer(const nvidia::isaac_ros::nitros::NitrosImageView& view,
+                                const std::string& topic) {
+        FrameInput frame;
+        frame.header.frame_id = view.GetFrameId();
+        frame.header.stamp.sec = view.GetTimestampSeconds();
+        frame.header.stamp.nanosec = view.GetTimestampNanoseconds();
+        frame.width = static_cast<int>(view.GetWidth());
+        frame.height = static_cast<int>(view.GetHeight());
+
+        const std::string encoding = view.GetEncoding();
+        if (encoding != sensor_msgs::image_encodings::BGR8) {
+            RCLCPP_ERROR_ONCE(this->get_logger(),
+                              "NITROS topic %s is '%s'; the engine needs bgr8", topic.c_str(),
+                              encoding.c_str());
+            return;
+        }
+
+        const cv::cuda::GpuMat wrapped(frame.height, frame.width, CV_8UC3,
+                                       const_cast<unsigned char*>(view.GetGpuData()));
+        wrapped.copyTo(frame.gpu);
+        addToBufferCallback(std::move(frame), topic);
+    }
+#endif
 
     void batchBufferCallback() {
         // Move the current buffer into a local processing buffer so the subscribers can keep
@@ -118,8 +369,7 @@ private:
         }
 
         // Build inputs in camera_topics_ order so the batch index trivially maps back to the topic.
-        std::vector<cv::Mat> images;
-        images.reserve(camera_topics_.size());
+        std::vector<FrameInput> frames(camera_topics_.size());
         std::vector<bool> topic_present(camera_topics_.size(), false);
         const int input_h = model_input_height_;
         const int input_w = model_input_width_;
@@ -128,28 +378,35 @@ private:
         // corresponding `topic_present` entry stays false, so we never publish detections for
         // that slot — the fill image is purely a shape placeholder.
         for (size_t i = 0; i < camera_topics_.size(); ++i) {
-            const std::string& topic = camera_topics_[i];
-            auto it = processing_buffer.find(topic);
+            auto it = processing_buffer.find(camera_topics_[i]);
             if (it == processing_buffer.end()) {
-                images.emplace_back(cv::Mat::zeros(cv::Size(input_w, input_h), CV_8UC3));
+                frames[i].width = input_w;
+                frames[i].height = input_h;
+                frames[i].gpu.create(input_h, input_w, CV_8UC3);
+                frames[i].gpu.setTo(cv::Scalar::all(0));
                 continue;
             }
             topic_present[i] = true;
-            try {
-                auto cv_ptr = cv_bridge::toCvShare(it->second, sensor_msgs::image_encodings::RGB8);
-                cv::Mat img;
-                cv::cvtColor(cv_ptr->image, img, cv::COLOR_RGB2BGR);
-                images.push_back(std::move(img));
-            } catch (cv_bridge::Exception& e) {
-                RCLCPP_ERROR(this->get_logger(),
-                             "Failed to convert ROS image on topic %s: %s",
-                             topic.c_str(), e.what());
-                topic_present[i] = false;
-                images.emplace_back(cv::Mat::zeros(cv::Size(input_w, input_h), CV_8UC3));
+            frames[i] = std::move(it->second);
+        }
+
+        // Rendering the overlay is the only thing that still needs pixels on the host, so the
+        // download happens here and only when it was asked for.
+        if (visualize_masks_) {
+            for (size_t i = 0; i < frames.size(); ++i) {
+                if (topic_present[i] && frames[i].host.empty()) {
+                    frames[i].gpu.download(frames[i].host);
+                }
             }
         }
 
-        std::vector<std::vector<Object>> objects = yoloV8_.detectObjects(images);
+        std::vector<cv::cuda::GpuMat> gpu_images;
+        gpu_images.reserve(frames.size());
+        for (FrameInput& frame : frames) {
+            gpu_images.push_back(frame.gpu);
+        }
+
+        std::vector<std::vector<Object>> objects = yoloV8_.detectObjects(gpu_images);
 
         // Per-batch detection log lives at INFO so it is visible by default during a race; per
         // detection details go to DEBUG to keep the steady-state log volume manageable.
@@ -165,55 +422,111 @@ private:
             }
         }
 
-        publishDetections(images, objects, topic_present, processing_buffer);
+        publishDetections(frames, objects, topic_present);
     }
 
-    void publishDetections(std::vector<cv::Mat>& images,
+    void publishDetections(std::vector<FrameInput>& frames,
                            std::vector<std::vector<Object>>& objects,
-                           const std::vector<bool>& topic_present,
-                           const ImageBuffer& processing_buffer) {
+                           const std::vector<bool>& topic_present) {
         for (size_t i = 0; i < camera_topics_.size(); ++i) {
             if (!topic_present[i]) {
                 continue;
             }
             const std::string& topic = camera_topics_[i];
-            const auto image_msg = processing_buffer.at(topic);
 
             yolov8_interfaces::msg::Yolov8Detections detectionMsg;
-            detectionMsg.header = image_msg->header;
+            detectionMsg.header = frames[i].header;
 
             if (enable_one_channel_mask_) {
-                publishOneChannelMask(objects[i], image_msg, detectionMsg, topic);
+                publishOneChannelMask(objects[i], frames[i], detectionMsg, topic);
             }
             if (visualize_masks_) {
-                visualizeMask(objects[i], images[i], topic, image_msg);
+                visualizeMask(objects[i], frames[i], topic);
             }
 
             addObjectsToDetectionMsg(objects[i], detectionMsg);
             detection_publishers_[topic]->publish(detectionMsg);
+#ifdef YOLOV8_WITH_NITROS
+            publishAnnotated(frames[i], objects[i], topic);
+#endif
         }
     }
 
-    void visualizeMask(std::vector<Object>& objects, cv::Mat& image,
-                       const std::string& topic,
-                       const sensor_msgs::msg::Image::SharedPtr& image_msg) {
-        yoloV8_.drawObjectLabels(image, objects);
+#ifdef YOLOV8_WITH_NITROS
+    // Downscale the frame and stroke each detection onto it, all on the device, then hand the
+    // buffer to NITROS. This is what the H.264 encoder consumes when COMPRESSION_SOURCE=DETECTION,
+    // so the uplink carries boxes instead of raw pixels without a host round trip.
+    void publishAnnotated(const FrameInput& frame, const std::vector<Object>& objects,
+                          const std::string& topic) {
+        auto it = annotated_streams_.find(topic);
+        if (it == annotated_streams_.end() || frame.gpu.empty()) {
+            return;
+        }
+
+        const double scale = static_cast<double>(annotate_long_edge_) /
+                             std::max(frame.width, frame.height);
+        const int outW = std::max(16, static_cast<int>(std::lround(frame.width * scale / 16.0)) * 16);
+        const int outH = std::max(16, static_cast<int>(std::lround(frame.height * scale / 16.0)) * 16);
+
+        int slot = -1;
+        cv::cuda::GpuMat out = it->second->acquire(outW, outH, slot);
+        if (out.empty()) {
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+                                 "Annotated buffers all in flight on %s; dropping frame",
+                                 topic.c_str());
+            return;
+        }
+
+        cv::cuda::resize(frame.gpu, out, out.size(), 0, 0, cv::INTER_LINEAR, annotate_stream_);
+
+        const double sx = static_cast<double>(outW) / frame.width;
+        const double sy = static_cast<double>(outH) / frame.height;
+        const int stroke = std::max(1, outH / 96);
+        const cv::Scalar colour(0, 255, 0);
+        const cv::Rect canvas(0, 0, outW, outH);
+        for (const Object& object : objects) {
+            cv::Rect r(static_cast<int>(std::lround(object.rect.x * sx)),
+                       static_cast<int>(std::lround(object.rect.y * sy)),
+                       static_cast<int>(std::lround(object.rect.width * sx)),
+                       static_cast<int>(std::lround(object.rect.height * sy)));
+            r &= canvas;
+            if (r.width <= 0 || r.height <= 0) {
+                continue;
+            }
+            const int t = std::min(stroke, std::min(r.width, r.height));
+            out(cv::Rect(r.x, r.y, r.width, t)).setTo(colour, annotate_stream_);
+            out(cv::Rect(r.x, r.y + r.height - t, r.width, t)).setTo(colour, annotate_stream_);
+            out(cv::Rect(r.x, r.y, t, r.height)).setTo(colour, annotate_stream_);
+            out(cv::Rect(r.x + r.width - t, r.y, t, r.height)).setTo(colour, annotate_stream_);
+        }
+
+        annotate_stream_.waitForCompletion();
+        it->second->publish(frame.header, out, slot);
+    }
+#endif
+
+    void visualizeMask(std::vector<Object>& objects, FrameInput& frame,
+                       const std::string& topic) {
+        if (frame.host.empty()) {
+            return;
+        }
+        yoloV8_.drawObjectLabels(frame.host, objects);
 
         sensor_msgs::msg::Image displayImageMsg;
-        cv_bridge::CvImage cv_image(image_msg->header, "bgr8", image);
+        cv_bridge::CvImage cv_image(frame.header, "bgr8", frame.host);
         cv_image.toImageMsg(displayImageMsg);
         image_publishers_[topic]->publish(displayImageMsg);
     }
 
     void publishOneChannelMask(std::vector<Object>& objects,
-                               const sensor_msgs::msg::Image::ConstSharedPtr& image_msg,
+                               const FrameInput& frame,
                                yolov8_interfaces::msg::Yolov8Detections& detectionMsg,
                                const std::string& topic) {
         cv::Mat oneChannelMask;
         yoloV8_.getOneChannelSegmentationMask(objects, oneChannelMask,
-                                              image_msg->height, image_msg->width);
+                                              frame.height, frame.width);
         try {
-            cv_bridge::CvImage cvBridgeOneChannelMask(image_msg->header, "mono8", oneChannelMask);
+            cv_bridge::CvImage cvBridgeOneChannelMask(frame.header, "mono8", oneChannelMask);
             detectionMsg.seg_mask_one_channel = *cvBridgeOneChannelMask.toImageMsg();
         } catch (cv_bridge::Exception& e) {
             RCLCPP_ERROR(this->get_logger(), "cv_bridge exception (one-channel mask): %s", e.what());
@@ -226,7 +539,7 @@ private:
                 return;
             }
             try {
-                cv_bridge::CvImage cvBridgeOneChannelMaskRGB8(image_msg->header, "rgb8", oneChannelMaskRGB8);
+                cv_bridge::CvImage cvBridgeOneChannelMaskRGB8(frame.header, "rgb8", oneChannelMaskRGB8);
                 one_channel_mask_publishers_[topic]->publish(*cvBridgeOneChannelMaskRGB8.toImageMsg());
             } catch (cv_bridge::Exception& e) {
                 RCLCPP_ERROR(this->get_logger(), "cv_bridge exception (one-channel mask visualization): %s", e.what());
@@ -284,6 +597,17 @@ private:
     bool visualize_masks_ = false;
     bool enable_one_channel_mask_ = false;
     bool visualize_one_channel_mask_ = false;
+#ifdef YOLOV8_WITH_NITROS
+    bool use_nitros_ = true;
+#else
+    bool use_nitros_ = false;
+#endif
+    std::string nitros_topic_suffix_ = "/image/nitros";
+    int64_t annotate_long_edge_ = 0;
+#ifdef YOLOV8_WITH_NITROS
+    std::map<std::string, std::unique_ptr<AnnotatedStream>> annotated_streams_;
+    cv::cuda::Stream annotate_stream_;
+#endif
 
     // Cached from the model so the missing-topic fallback image matches the engine input.
     int model_input_height_ = 0;
@@ -297,8 +621,15 @@ private:
     std::mutex buffer_mutex_;
 
     std::vector<rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr> subscriptions_;
+#ifdef YOLOV8_WITH_NITROS
+    std::vector<std::shared_ptr<nvidia::isaac_ros::nitros::ManagedNitrosSubscriber<
+        nvidia::isaac_ros::nitros::NitrosImageView>>> nitros_subscriptions_;
+#endif
+    std::unique_ptr<YoloV8> owned_engine_;
     YoloV8& yoloV8_;
 };
+
+RCLCPP_COMPONENTS_REGISTER_NODE(YoloV8Node)
 
 int main(int argc, char *argv[]) {
     YoloV8Config config;

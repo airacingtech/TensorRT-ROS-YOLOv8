@@ -25,6 +25,10 @@ struct YoloV8Config {
     int segH = 160;
     int segW = 160;
     float segmentationThreshold = 0.5f;
+    // When false, only boxes and labels are produced: the prototype matmul, the per-detection
+    // upsample/threshold and the device-to-host mask copies are all skipped. Object::boxMask is
+    // left empty. Turn this off unless a consumer actually reads the masks.
+    bool segmentationMasks = true;
     // Class names indexed by the model's class id. Override via --class-names. Each entry needs a
     // corresponding color in COLOR_LIST below.
     std::vector<std::string> classNames = { "car" };
@@ -56,10 +60,29 @@ public:
     int getInputWidth() const { return m_trtEngine->getInputDims()[0].d[2]; }
 
 private:
+    // Which output binding is the detection head and which the mask prototypes; resolved once
+    // from the engine's output shapes.
+    void resolveOutputBindings();
+    int m_detIdx = 0;
+    int m_protoIdx = 1;
+    cv::cuda::GpuMat m_headT;
+    cv::cuda::GpuMat m_bestScores;
+    cv::cuda::GpuMat m_maskConfs;
+    cv::cuda::GpuMat m_protoScores;
+    cv::cuda::GpuMat m_boxLogits;
+    cv::cuda::GpuMat m_boxBinary;
+    cv::cuda::GpuMat m_boxMask;
+    // All post-processing runs on one stream and is waited on once with a blocking event.
+    // Each default-stream OpenCV CUDA call would otherwise spin-wait on its own.
+    cv::cuda::Stream m_stream;
+    cudaEvent_t m_ppDone = nullptr;
+    void syncPostProcess();
+    bool m_bindingsResolved = false;
+
     std::vector<std::vector<cv::cuda::GpuMat>> preprocess(std::vector<cv::cuda::GpuMat> &gpuImgs);
 
-    std::vector<std::vector<Object>> postProcessSegmentation(std::vector<std::vector<std::vector<float>>>& batchedFeatureVectors);
-    std::vector<Object> postProcessSegmentation(std::vector<std::vector<float>>& featureVectors, int batch_index);
+    std::vector<std::vector<Object>> postProcessSegmentation(int batchSize);
+    std::vector<Object> postProcessBatchItem(int batch_index);
 
     std::unique_ptr<Engine> m_trtEngine = nullptr;
 
@@ -81,6 +104,7 @@ private:
     const int SEG_H;
     const int SEG_W;
     const float SEGMENTATION_THRESHOLD;
+    const bool SEGMENTATION_MASKS;
 
     const std::vector<std::string> CLASS_NAMES;
 

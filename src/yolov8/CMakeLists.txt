@@ -5,18 +5,53 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
-# CUDA toolkit (override with -DCUDA_VERSION=<x.y>)
-if(NOT DEFINED CUDA_VERSION)
-    set(CUDA_VERSION "11.8")
+# Pin with -DCUDA_VERSION=<x.y>; otherwise follow the /usr/local/cuda symlink, which tracks
+# whatever toolkit is installed (13.x on the AV24 and the dev laptops).
+if(DEFINED CUDA_VERSION)
+    set(CUDA_TOOLKIT_ROOT_DIR "/usr/local/cuda-${CUDA_VERSION}")
+else()
+    # Derive from nvcc on PATH, not the /usr/local/cuda symlink: OpenCV-CUDA pins the exact
+    # toolkit it was built against, and a machine can have several installed.
+    find_program(_nvcc nvcc)
+    if(_nvcc)
+        get_filename_component(CUDA_TOOLKIT_ROOT_DIR "${_nvcc}" DIRECTORY)
+        get_filename_component(CUDA_TOOLKIT_ROOT_DIR "${CUDA_TOOLKIT_ROOT_DIR}" DIRECTORY)
+    else()
+        set(CUDA_TOOLKIT_ROOT_DIR "/usr/local/cuda")
+    endif()
 endif()
-set(CUDA_TOOLKIT_ROOT_DIR "/usr/local/cuda-${CUDA_VERSION}")
-set(CMAKE_CUDA_COMPILER "/usr/local/cuda-${CUDA_VERSION}/bin/nvcc")
+if(NOT EXISTS "${CUDA_TOOLKIT_ROOT_DIR}")
+    message(FATAL_ERROR "CUDA toolkit not found at ${CUDA_TOOLKIT_ROOT_DIR}. "
+        "Install it or pass -DCUDA_VERSION=<x.y>.")
+endif()
+set(CMAKE_CUDA_COMPILER "${CUDA_TOOLKIT_ROOT_DIR}/bin/nvcc")
+
+# OpenCV-CUDA lives at a non-standard prefix (see AV24_DEPENDENCIES.md), so record the
+# resolved library directories in the RPATH rather than relying on LD_LIBRARY_PATH at runtime.
+set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
+set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE)
+# ros_segmentation installs to lib/yolov8/ but its sibling libraries land in lib/.
+set(CMAKE_INSTALL_RPATH "$ORIGIN:$ORIGIN/..")
 
 find_package(ament_cmake_auto REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(cv_bridge REQUIRED)
 find_package(yolov8_interfaces REQUIRED)
+find_package(rclcpp_components REQUIRED)
+
+# NITROS ingest is optional: when Isaac ROS is in the workspace the node can take camera frames
+# as GXF device buffers and skip cv_bridge and the host->device upload entirely. Absent it, the
+# node builds exactly as before against sensor_msgs.
+find_package(isaac_ros_managed_nitros QUIET)
+find_package(isaac_ros_nitros_image_type QUIET)
+if(isaac_ros_managed_nitros_FOUND AND isaac_ros_nitros_image_type_FOUND)
+    set(YOLOV8_WITH_NITROS TRUE)
+    message(STATUS "yolov8: NITROS found, building the device-buffer ingest path")
+else()
+    set(YOLOV8_WITH_NITROS FALSE)
+    message(STATUS "yolov8: no NITROS, building the sensor_msgs-only ingest path")
+endif()
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -57,8 +92,32 @@ target_include_directories(YoloV8_TRT PUBLIC libs/tensorrt-cpp-api/src)
 
 # ROS2 node
 add_executable(ros_segmentation src/ros_segmentation.cpp)
-ament_target_dependencies(ros_segmentation rclcpp sensor_msgs cv_bridge yolov8_interfaces)
+ament_target_dependencies(ros_segmentation
+    rclcpp rclcpp_components sensor_msgs cv_bridge yolov8_interfaces)
 target_link_libraries(ros_segmentation YoloV8_TRT)
+
+if(YOLOV8_WITH_NITROS)
+    target_compile_definitions(ros_segmentation PRIVATE YOLOV8_WITH_NITROS)
+    ament_target_dependencies(ros_segmentation isaac_ros_managed_nitros isaac_ros_nitros_image_type)
+endif()
+
+# Same node as a loadable component. Composing it into the camera driver's container is the
+# only way a NITROS device buffer stays resolvable -- across processes NITROS falls back to
+# sensor_msgs and the frame is copied off the GPU.
+add_library(yolov8_component SHARED src/ros_segmentation.cpp)
+ament_target_dependencies(yolov8_component
+    rclcpp rclcpp_components sensor_msgs cv_bridge yolov8_interfaces)
+target_link_libraries(yolov8_component YoloV8_TRT)
+if(YOLOV8_WITH_NITROS)
+    target_compile_definitions(yolov8_component PRIVATE YOLOV8_WITH_NITROS)
+    ament_target_dependencies(yolov8_component isaac_ros_managed_nitros isaac_ros_nitros_image_type)
+endif()
+rclcpp_components_register_nodes(yolov8_component "YoloV8Node")
+
+install(TARGETS yolov8_component
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION bin)
 
 install(TARGETS ros_segmentation
   DESTINATION lib/${PROJECT_NAME})

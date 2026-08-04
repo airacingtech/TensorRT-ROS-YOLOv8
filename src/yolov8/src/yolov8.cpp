@@ -1,4 +1,7 @@
 #include <opencv2/cudaimgproc.hpp>
+#include <opencv2/cudaarithm.hpp>
+#include <opencv2/cudawarping.hpp>
+#include <opencv2/core/cuda_stream_accessor.hpp>
 #include "yolov8.h"
 
 YoloV8::YoloV8(const std::string& onnxModelPath, const YoloV8Config& config)
@@ -9,6 +12,7 @@ YoloV8::YoloV8(const std::string& onnxModelPath, const YoloV8Config& config)
         , SEG_H(config.segH)
         , SEG_W(config.segW)
         , SEGMENTATION_THRESHOLD(config.segmentationThreshold)
+        , SEGMENTATION_MASKS(config.segmentationMasks)
         , CLASS_NAMES(config.classNames) {
     if (config.batchSize <= 0) {
         throw std::runtime_error("Error: batch size must be > 0 (got " + std::to_string(config.batchSize) + ")");
@@ -48,6 +52,7 @@ std::vector<std::vector<cv::cuda::GpuMat>> YoloV8::preprocess(std::vector<cv::cu
     m_imgHeight_.clear();
     m_imgWidth_.clear();
     m_ratio_.clear();
+    size_t slot = 0;
     for (cv::cuda::GpuMat &gpuImg : gpuImgs) {
         // Cache the original dimensions and the resize ratio so detections can be mapped back to
         // the source image resolution during post-processing.
@@ -57,21 +62,54 @@ std::vector<std::vector<cv::cuda::GpuMat>> YoloV8::preprocess(std::vector<cv::cu
             inputDims[0].d[1] / static_cast<float>(gpuImg.rows)));
         // Letterbox to the engine input size if the source image doesn't already match.
         if (gpuImg.rows != inputDims[0].d[1] || gpuImg.cols != inputDims[0].d[2]) {
-            gpuImg = Engine::resizeKeepAspectRatioPadRightBottom(gpuImg, inputDims[0].d[1], inputDims[0].d[2]);
+            gpuImg = m_trtEngine->letterboxInto(gpuImg, slot, inputDims[0].d[1], inputDims[0].d[2]);
         }
+        ++slot;
         batches.push_back(std::move(gpuImg));
     }
     inputs.push_back(std::move(batches));
     return inputs;
 }
 
+void YoloV8::syncPostProcess() {
+    if (m_ppDone == nullptr) {
+        cudaEventCreateWithFlags(&m_ppDone, cudaEventBlockingSync | cudaEventDisableTiming);
+    }
+    cudaEventRecord(m_ppDone, cv::cuda::StreamAccessor::getStream(m_stream));
+    cudaEventSynchronize(m_ppDone);
+}
+
+void YoloV8::resolveOutputBindings() {
+    if (m_bindingsResolved) {
+        return;
+    }
+    // Binding order depends on the ONNX exporter, so identify each output by shape: the
+    // detection head has more rows than the mask channels, the prototypes fewer.
+    const auto& outputDims = m_trtEngine->getOutputDims();
+    for (size_t k = 0; k < outputDims.size(); ++k) {
+        if (outputDims[k].d[1] > SEG_CHANNELS + 4) {
+            m_detIdx = static_cast<int>(k);
+        } else {
+            m_protoIdx = static_cast<int>(k);
+        }
+    }
+    m_bindingsResolved = true;
+}
+
 std::vector<std::vector<Object>> YoloV8::detectObjects(std::vector<cv::cuda::GpuMat> &gpuImgs) {
+    resolveOutputBindings();
     const auto input = preprocess(gpuImgs);
     std::vector<std::vector<std::vector<float>>> featureVectors;
-    if (!m_trtEngine->runInference(input, featureVectors)) {
+
+    // The mask prototypes are the largest output by far and are only ever consumed by the GPU
+    // mask pipeline below, so they stay resident on the device.
+    // Both outputs are consumed on the device, so nothing is copied back from inference.
+    const std::vector<bool> download(m_trtEngine->getOutputDims().size(), false);
+
+    if (!m_trtEngine->runInference(input, featureVectors, download)) {
         throw std::runtime_error("Error: Unable to run inference.");
     }
-    return postProcessSegmentation(featureVectors);
+    return postProcessSegmentation(static_cast<int>(gpuImgs.size()));
 }
 
 std::vector<std::vector<Object>> YoloV8::detectObjects(std::vector<cv::Mat> &imgMats) {
@@ -85,40 +123,62 @@ std::vector<std::vector<Object>> YoloV8::detectObjects(std::vector<cv::Mat> &img
     return detectObjects(gpuImgs);
 }
 
-std::vector<std::vector<Object>> YoloV8::postProcessSegmentation(std::vector<std::vector<std::vector<float>>>& batchedFeatureVectors) {
+std::vector<std::vector<Object>> YoloV8::postProcessSegmentation(int batchSize) {
     std::vector<std::vector<Object>> batched_objects;
-    int batch_index = 0;
-    for (std::vector<std::vector<float>> &featureVectors : batchedFeatureVectors) {
-        batched_objects.push_back(postProcessSegmentation(featureVectors, batch_index));
-        batch_index++;
+    batched_objects.reserve(batchSize);
+    for (int batch_index = 0; batch_index < batchSize; ++batch_index) {
+        batched_objects.push_back(postProcessBatchItem(batch_index));
     }
     return batched_objects;
 }
 
-std::vector<Object> YoloV8::postProcessSegmentation(std::vector<std::vector<float>>& featureVectors, int batch_index) {
+std::vector<Object> YoloV8::postProcessBatchItem(int batch_index) {
     const auto& outputDims = m_trtEngine->getOutputDims();
-
-    // The two outputs are the detection head ([1, 4+numClasses+SEG_CHANNELS, anchors]) and the
-    // mask prototypes ([1, SEG_CHANNELS, SEG_H, SEG_W]). Their binding order depends on the ONNX
-    // exporter, so identify each by shape rather than assuming a fixed index — a mismatch points
-    // the prototypes Mat at the (smaller) detection buffer and reads out of bounds (segfault).
-    int detIdx = 0, protoIdx = 0;
-    for (size_t k = 0; k < outputDims.size(); ++k) {
-        if (outputDims[k].d[1] > SEG_CHANNELS + 4) {
-            detIdx = static_cast<int>(k);
-        } else {
-            protoIdx = static_cast<int>(k);
-        }
-    }
+    const int detIdx = m_detIdx;
 
     const int numChannels = outputDims[detIdx].d[1];
     const int numAnchors = outputDims[detIdx].d[2];
     const int numClasses = numChannels - SEG_CHANNELS - 4;
 
-    cv::Mat output = cv::Mat(numChannels, numAnchors, CV_32F, featureVectors[detIdx].data());
-    output = output.t();
+    // The detection head stays on the device. Transposing there also replaces a full-size
+    // host transpose of the [numChannels, numAnchors] block.
+    const cv::cuda::GpuMat head(numChannels, numAnchors, CV_32F,
+                                m_trtEngine->getOutputDevicePtr(detIdx, batch_index));
+    cv::cuda::transpose(head, m_headT, m_stream);
 
-    cv::Mat protos = cv::Mat(SEG_CHANNELS, SEG_H * SEG_W, CV_32F, featureVectors[protoIdx].data());
+    const cv::cuda::GpuMat classBlock = m_headT.colRange(4, 4 + numClasses);
+    if (numClasses == 1) {
+        m_bestScores = classBlock;
+    } else {
+        cv::cuda::reduce(classBlock, m_bestScores, 1, cv::REDUCE_MAX, CV_32F, m_stream);
+    }
+
+    // One 34 KB copy of the per-anchor scores, then a single wait. Scanning them on the host
+    // is a few microseconds and replaces a separate minMaxLoc round trip.
+    cv::Mat bestHost;
+    m_bestScores.download(bestHost, m_stream);
+    syncPostProcess();
+
+    std::vector<int> keep;
+    keep.reserve(64);
+    for (int i = 0; i < numAnchors; ++i) {
+        if (bestHost.at<float>(i) > PROBABILITY_THRESHOLD) {
+            keep.push_back(i);
+        }
+    }
+    if (keep.empty()) {
+        return {};
+    }
+
+    // Gather the surviving anchors on the device so only they cross back, instead of the
+    // whole head.
+    cv::cuda::GpuMat gathered(static_cast<int>(keep.size()), numChannels, CV_32F);
+    for (size_t k = 0; k < keep.size(); ++k) {
+        m_headT.row(keep[k]).copyTo(gathered.row(static_cast<int>(k)), m_stream);
+    }
+    cv::Mat survivors;
+    gathered.download(survivors, m_stream);
+    syncPostProcess();
 
     std::vector<int> labels;
     std::vector<float> scores;
@@ -126,14 +186,14 @@ std::vector<Object> YoloV8::postProcessSegmentation(std::vector<std::vector<floa
     std::vector<cv::Mat> maskConfs;
     std::vector<int> indices;
 
-    for (int i = 0; i < numAnchors; i++) {
-        auto rowPtr = output.row(i).ptr<float>();
+    for (int i = 0; i < survivors.rows; i++) {
+        auto rowPtr = survivors.ptr<float>(i);
         auto bboxesPtr = rowPtr;
         auto scoresPtr = rowPtr + 4;
         auto maskConfsPtr = rowPtr + 4 + numClasses;
         auto maxSPtr = std::max_element(scoresPtr, scoresPtr + numClasses);
         float score = *maxSPtr;
-        if (score > PROBABILITY_THRESHOLD) {
+        {
             float x = *bboxesPtr++;
             float y = *bboxesPtr++;
             float w = *bboxesPtr++;
@@ -151,12 +211,12 @@ std::vector<Object> YoloV8::postProcessSegmentation(std::vector<std::vector<floa
             bbox.width = x1 - x0;
             bbox.height = y1 - y0;
 
-            cv::Mat maskConf = cv::Mat(1, SEG_CHANNELS, CV_32F, maskConfsPtr);
-
             bboxes.push_back(bbox);
             labels.push_back(label);
             scores.push_back(score);
-            maskConfs.push_back(maskConf);
+            if (SEGMENTATION_MASKS) {
+                maskConfs.push_back(cv::Mat(1, SEG_CHANNELS, CV_32F, maskConfsPtr).clone());
+            }
         }
     }
 
@@ -174,18 +234,37 @@ std::vector<Object> YoloV8::postProcessSegmentation(std::vector<std::vector<floa
         obj.label = labels[i];
         obj.rect = bboxes[i];
         obj.probability = scores[i];
-        masks.push_back(maskConfs[i]);
+        if (SEGMENTATION_MASKS) {
+            masks.push_back(maskConfs[i]);
+        }
         objs.push_back(obj);
         cnt++;
     }
 
-    // Build the per-instance segmentation masks at original image resolution.
+    // Build the per-instance segmentation masks on the GPU. The prototypes were never copied
+    // back, so the matmul, the upsample and the threshold all run on the device and only each
+    // object's own box-sized mask crosses back to the host.
     if (!masks.empty()) {
-        cv::Mat matmulRes = (masks * protos).t();
-        cv::Mat maskMat = matmulRes.reshape(indices.size(), { SEG_W, SEG_H });
+        // Every buffer below is reused across frames. Sizing them to the frame's worst case once
+        // and taking ROI views keeps cudaMallocPitch/cudaFree out of the per-detection loop, which
+        // otherwise reallocated on every box because no two boxes share a size.
+        if (m_maskConfs.rows < masks.rows || m_maskConfs.cols != masks.cols ||
+            m_maskConfs.type() != masks.type()) {
+            m_maskConfs.create(masks.rows, masks.cols, masks.type());
+            m_protoScores.create(masks.rows, SEG_H * SEG_W, CV_32F);
+        }
+        cv::cuda::GpuMat masksGpu = m_maskConfs.rowRange(0, masks.rows);
+        masksGpu.upload(masks, m_stream);
+        const cv::cuda::GpuMat protosGpu(
+            SEG_CHANNELS, SEG_H * SEG_W, CV_32F,
+            m_trtEngine->getOutputDevicePtr(m_protoIdx, batch_index));
 
-        std::vector<cv::Mat> maskChannels;
-        cv::split(maskMat, maskChannels);
+        cv::cuda::GpuMat scores = m_protoScores.rowRange(0, masks.rows);
+        cv::cuda::gemm(masksGpu, protosGpu, 1.0, cv::cuda::GpuMat(), 0.0, scores, 0, m_stream);
+
+        // sigmoid(x) > t is exactly x > logit(t), so the sigmoid pass is unnecessary.
+        const float t = std::clamp(SEGMENTATION_THRESHOLD, 1e-6f, 1.f - 1e-6f);
+        const double logitThreshold = std::log(t / (1.f - t));
 
         cv::Rect roi;
         if (m_imgHeight_[batch_index] > m_imgWidth_[batch_index]) {
@@ -194,16 +273,45 @@ std::vector<Object> YoloV8::postProcessSegmentation(std::vector<std::vector<floa
             roi = cv::Rect(0, 0, SEG_W, SEG_H * m_imgHeight_[batch_index] / m_imgWidth_[batch_index]);
         }
 
-        for (size_t i = 0; i < indices.size(); i++) {
-            cv::Mat dest, mask;
-            cv::exp(-maskChannels[i], dest);
-            dest = 1.0 / (1.0 + dest);
-            dest = dest(roi);
-            cv::resize(dest, mask,
-                       cv::Size(static_cast<int>(m_imgWidth_[batch_index]),
-                                static_cast<int>(m_imgHeight_[batch_index])),
-                       cv::INTER_LINEAR);
-            objs[i].boxMask = mask(objs[i].rect) > SEGMENTATION_THRESHOLD;
+        // Upsample only the slice of the prototype that the box covers, straight to box size.
+        // Resizing the full frame and cropping afterwards does ~380x more work per detection
+        // for the same interior pixels -- bilinear sampling is local, so this is equivalent.
+        const float sx = static_cast<float>(roi.width) / m_imgWidth_[batch_index];
+        const float sy = static_cast<float>(roi.height) / m_imgHeight_[batch_index];
+        // Boxes are clamped to the frame, so a frame-sized scratch buffer covers every box.
+        const cv::Size maxBox(static_cast<int>(m_imgWidth_[batch_index]),
+                              static_cast<int>(m_imgHeight_[batch_index]));
+        if (m_boxLogits.rows < maxBox.height || m_boxLogits.cols < maxBox.width) {
+            m_boxLogits.create(maxBox, CV_32F);
+            m_boxBinary.create(maxBox, CV_32F);
+            m_boxMask.create(maxBox, CV_8U);
+        }
+
+        for (size_t i = 0; i < objs.size(); i++) {
+            const cv::Rect& r = objs[i].rect;
+            if (r.width <= 0 || r.height <= 0) {
+                continue;
+            }
+            cv::Rect src(static_cast<int>(std::floor(r.x * sx)),
+                         static_cast<int>(std::floor(r.y * sy)),
+                         std::max(1, static_cast<int>(std::ceil(r.width * sx))),
+                         std::max(1, static_cast<int>(std::ceil(r.height * sy))));
+            src &= cv::Rect(0, 0, roi.width, roi.height);
+            if (src.width <= 0 || src.height <= 0) {
+                continue;
+            }
+
+            const cv::Rect box(0, 0, r.width, r.height);
+            cv::cuda::GpuMat boxF = m_boxLogits(box);
+            cv::cuda::GpuMat boxThresh = m_boxBinary(box);
+            cv::cuda::GpuMat boxMask = m_boxMask(box);
+
+            const cv::cuda::GpuMat proto(SEG_H, SEG_W, CV_32F, scores.ptr<float>(i));
+            cv::cuda::resize(proto(roi)(src), boxF, r.size(), 0, 0, cv::INTER_LINEAR, m_stream);
+            cv::cuda::threshold(boxF, boxThresh, logitThreshold, 255.0, cv::THRESH_BINARY, m_stream);
+            boxThresh.convertTo(boxMask, CV_8U, m_stream);
+            boxMask.download(objs[i].boxMask, m_stream);
+            syncPostProcess();
         }
     }
 

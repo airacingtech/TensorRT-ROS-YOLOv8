@@ -77,6 +77,8 @@ struct Options {
     std::string calibrationDataDirectoryPath;
     // Batch size used while computing INT8 calibration data; set as large as the GPU allows.
     int32_t calibrationBatchSize = 128;
+    // Build-time scratch budget handed to TensorRT for tactic selection.
+    size_t maxWorkspaceSize = 4ULL << 30;
     int32_t optBatchSize = 4;
     int32_t maxBatchSize = 6;
     int deviceIndex = 0;
@@ -135,7 +137,20 @@ public:
     // Run inference.
     // Input format [input][batch][cv::cuda::GpuMat]
     // Output format [batch][output][feature_vector]
-    bool runInference(const std::vector<std::vector<cv::cuda::GpuMat>>& inputs, std::vector<std::vector<std::vector<float>>>& featureVectors);
+    // `downloadOutput` selects, per output tensor, whether it is copied back to the host. An
+    // empty vector downloads everything (the original behaviour). Outputs left on the device
+    // are reachable via getOutputDevicePtr() and stay valid until the next runInference call.
+    bool runInference(const std::vector<std::vector<cv::cuda::GpuMat>>& inputs,
+                      std::vector<std::vector<std::vector<float>>>& featureVectors,
+                      const std::vector<bool>& downloadOutput = {});
+
+    // Device pointer to output tensor `outputIdx` for batch item `batch`.
+    [[nodiscard]] void* getOutputDevicePtr(int outputIdx, int batch) const {
+        const size_t numInputs = m_inputDims.size();
+        const size_t len = m_outputLengthsFloat[outputIdx];
+        return static_cast<char*>(m_buffers[numInputs + outputIdx]) +
+               static_cast<size_t>(batch) * len * sizeof(float);
+    }
 
     // Utility method for resizing an image while maintaining the aspect ratio by adding padding to smaller dimension after scaling
     // While letterbox padding normally adds padding to top & bottom, or left & right sides, this implementation only adds padding to the right or bottom side
@@ -149,6 +164,9 @@ public:
     // Converts a batch of NHWC GpuMats into a single NCHW GpuMat blob, applying optional
     // normalization and mean subtraction in one pass.
     static cv::cuda::GpuMat blobFromGpuMats(const std::vector<cv::cuda::GpuMat>& batchInput, const std::array<float, 3>& subVals, const std::array<float, 3>& divVals, bool normalize);
+    // Same conversion but into engine-owned scratch and on the engine's stream. Used on the
+    // hot path; the static version stays for the offline INT8 calibrator.
+    cv::cuda::GpuMat blobFromGpuMatsCached(const std::vector<cv::cuda::GpuMat>& batchInput, const std::array<float, 3>& subVals, const std::array<float, 3>& divVals, bool normalize);
 private:
     // Converts the engine options into a string
     std::string serializeEngineOptions(const Options& options, const std::string& onnxModelPath);
@@ -165,6 +183,26 @@ private:
     // Holds pointers to the input and output GPU buffers
     std::vector<void*> m_buffers;
     std::vector<uint32_t> m_outputLengthsFloat{};
+    // Created once in loadNetwork. Creating/destroying a stream per inference costs a
+    // device sync on every frame.
+    cudaStream_t m_inferenceStream = nullptr;
+    // Waiting on a blocking-sync event parks the thread on a driver semaphore. Plain
+    // cudaStreamSynchronize spins, which burns a core for the whole inference.
+    cudaEvent_t m_inferenceDone = nullptr;
+    // Scratch for the NCHW blob, reused so the hot path does no device allocation.
+    cv::cuda::GpuMat m_blob;
+    // Preprocess scratch, allocated once. Every cudaMalloc/cudaFree serialises with the
+    // device, and the old code did ~14 of them per inference.
+    std::vector<cv::cuda::GpuMat> m_letterbox;
+    std::vector<cv::cuda::GpuMat> m_letterboxTmp;
+    cv::cuda::GpuMat m_blobFloat;
+    cv::cuda::Stream m_cvStream;
+
+public:
+    // Letterbox into reusable scratch owned by the engine; `slot` indexes the batch.
+    cv::cuda::GpuMat letterboxInto(const cv::cuda::GpuMat& input, size_t slot,
+                                   size_t height, size_t width);
+private:
     std::vector<nvinfer1::Dims3> m_inputDims;
     std::vector<nvinfer1::Dims> m_outputDims;
     std::vector<std::string> m_IOTensorNames;
