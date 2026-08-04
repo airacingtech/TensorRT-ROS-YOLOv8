@@ -92,7 +92,8 @@ target_include_directories(YoloV8_TRT PUBLIC libs/tensorrt-cpp-api/src)
 
 # ROS2 node
 add_executable(ros_segmentation src/ros_segmentation.cpp)
-ament_target_dependencies(ros_segmentation rclcpp sensor_msgs cv_bridge yolov8_interfaces)
+ament_target_dependencies(ros_segmentation
+    rclcpp rclcpp_components sensor_msgs cv_bridge yolov8_interfaces)
 target_link_libraries(ros_segmentation YoloV8_TRT)
 
 if(YOLOV8_WITH_NITROS)
