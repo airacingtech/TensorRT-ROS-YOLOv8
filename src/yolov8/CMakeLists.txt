@@ -5,13 +5,33 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
-# Pin with -DCUDA_VERSION=<x.y>; otherwise follow the /usr/local/cuda symlink, which tracks
-# whatever toolkit is installed (13.x on the AV24 and the dev laptops).
+# OpenCV-CUDA lives at a non-default prefix; prefer it when present so clean
+# builds don't silently fall back to the CUDA-less system OpenCV.
+if(NOT DEFINED OpenCV_DIR)
+    foreach(_cv_prefix /opt/opencv-cuda $ENV{HOME}/ART/opencv-cuda)
+        if(EXISTS "${_cv_prefix}/lib/cmake/opencv4/OpenCVConfig.cmake")
+            set(OpenCV_DIR "${_cv_prefix}/lib/cmake/opencv4" CACHE PATH "OpenCV-CUDA build")
+            break()
+        endif()
+    endforeach()
+endif()
+
+# CUDA toolkit selection. Pin with -DCUDA_VERSION=<x.y>; otherwise match the
+# exact version the OpenCV-CUDA build was compiled with -- its config fatals on
+# any other, and a machine can carry several toolkits plus a newer nvcc on PATH
+# (e.g. 13.0 on the AV24 while OpenCV/TensorRT are the 12.6 family).
+if(NOT DEFINED CUDA_VERSION AND DEFINED OpenCV_DIR AND EXISTS "${OpenCV_DIR}/OpenCVConfig.cmake")
+    file(STRINGS "${OpenCV_DIR}/OpenCVConfig.cmake" _opencv_cuda_line
+         REGEX "set\\(OpenCV_CUDA_VERSION \"[0-9.]+\"\\)")
+    if(_opencv_cuda_line MATCHES "\"([0-9]+\\.[0-9]+)\"")
+        set(CUDA_VERSION "${CMAKE_MATCH_1}")
+        message(STATUS "CUDA toolkit pinned to ${CUDA_VERSION} by ${OpenCV_DIR}/OpenCVConfig.cmake")
+    endif()
+endif()
 if(DEFINED CUDA_VERSION)
     set(CUDA_TOOLKIT_ROOT_DIR "/usr/local/cuda-${CUDA_VERSION}")
 else()
-    # Derive from nvcc on PATH, not the /usr/local/cuda symlink: OpenCV-CUDA pins the exact
-    # toolkit it was built against, and a machine can have several installed.
+    # No OpenCV-CUDA build found: derive from nvcc on PATH, else the /usr/local/cuda symlink.
     find_program(_nvcc nvcc)
     if(_nvcc)
         get_filename_component(CUDA_TOOLKIT_ROOT_DIR "${_nvcc}" DIRECTORY)

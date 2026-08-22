@@ -19,6 +19,10 @@
 #pragma GCC diagnostic pop
 
 namespace Util {
+    // Persistent directory (trailing slash) holding serialized TensorRT engines,
+    // kept outside the colcon install tree so a rebuild does not force a regeneration.
+    std::string engineCacheDir(const std::string& modelsDir);
+
     inline bool doesFileExist(const std::string& filepath) {
         std::ifstream f(filepath.c_str());
         return f.good();

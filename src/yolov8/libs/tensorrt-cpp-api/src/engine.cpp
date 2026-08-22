@@ -1,6 +1,8 @@
 #include <algorithm>
 #include <fstream>
 #include <filesystem>
+#include <cstdlib>
+#include <system_error>
 #include <iostream>
 #include <random>
 #include <iterator>
@@ -11,6 +13,31 @@
 
 using namespace nvinfer1;
 using namespace Util;
+
+// The colcon install tree is wiped on a clean rebuild, so caching serialized engines
+// beside the installed .onnx means paying the multi-minute TensorRT build every rebuild.
+// Keep them in a persistent per-user cache instead; YOLOV8_ENGINE_CACHE overrides it.
+std::string Util::engineCacheDir(const std::string& modelsDir) {
+    const char* override_dir = std::getenv("YOLOV8_ENGINE_CACHE");
+    std::string dir;
+    if (override_dir != nullptr && override_dir[0] != '\0') {
+        dir = override_dir;
+    } else {
+        const char* home = std::getenv("HOME");
+        dir = home != nullptr && home[0] != '\0'
+                  ? std::string(home) + "/.cache/art/yolov8_engines"
+                  : modelsDir + "/engines";
+    }
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    if (ec) {
+        std::cout << "Could not create engine cache dir " << dir << " (" << ec.message()
+                  << "), falling back to " << modelsDir << "/engines" << std::endl;
+        dir = modelsDir + "/engines";
+        std::filesystem::create_directories(dir, ec);
+    }
+    return dir + "/";
+}
 
 std::vector<std::string> Util::getFilesInDirectory(const std::string& dirPath) {
     std::vector<std::string> filepaths;
@@ -61,14 +88,10 @@ bool Engine::build(std::string onnxModelPath, const std::array<float, 3>& subVal
     // Only regenerate the engine file if it has not already been generated for the specified options
     m_engineName = serializeEngineOptions(m_options, onnxModelPath);
     batch_size_ = m_options.maxBatchSize;
-    std::cout << "Searching for engine file " << m_engineName << " in directory " << modelsDir << std::endl;
-
     // Create Engine path
-    std::string engine_path = modelsDir + "/engines/";
-    if (!std::filesystem::exists(engine_path)) {
-        std::filesystem::create_directory(engine_path);
-    }
-    engine_path += m_engineName;
+    const std::string engine_dir = Util::engineCacheDir(modelsDir);
+    std::string engine_path = engine_dir + m_engineName;
+    std::cout << "Searching for engine file " << m_engineName << " in directory " << engine_dir << std::endl;
 
     if (doesFileExist(engine_path)) {
         std::cout << "Engine found, not regenerating..." << std::endl;
@@ -268,7 +291,7 @@ Engine::~Engine() {
 bool Engine::loadNetwork(std::string onnxModelPath) {
     // Get engine path from onnxModelPath
     std::string modelsDir = onnxModelPath.substr(0, onnxModelPath.find_last_of("/"));
-    std::string engine_path = modelsDir + "/engines/" + m_engineName;
+    std::string engine_path = Util::engineCacheDir(modelsDir) + m_engineName;
 
     // Read the serialized model from disk
     std::ifstream file(engine_path, std::ios::binary | std::ios::ate);
